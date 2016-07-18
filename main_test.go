@@ -1,10 +1,11 @@
 package main
 
 import (
-	"configurate"
-	"dockerops"
 	"os"
 	"testing"
+
+	"github.com/cyverse-de/configurate"
+	"github.com/cyverse-de/dockerops"
 
 	"golang.org/x/net/context"
 

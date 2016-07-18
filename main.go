@@ -10,7 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"version"
+
+	"github.com/cyverse-de/version"
 
 	"golang.org/x/net/context"
 

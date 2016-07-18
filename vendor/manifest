@@ -2,6 +2,14 @@
 	"version": 0,
 	"dependencies": [
 		{
+			"importpath": "github.com/Microsoft/go-winio",
+			"repository": "https://github.com/Microsoft/go-winio",
+			"vcs": "git",
+			"revision": "ce2922f643c8fd76b46cadc7f404a06282678b34",
+			"branch": "master",
+			"notests": true
+		},
+		{
 			"importpath": "github.com/Sirupsen/logrus",
 			"repository": "https://github.com/Sirupsen/logrus",
 			"vcs": "git",
@@ -21,8 +29,8 @@
 			"importpath": "github.com/cyverse-de/dockerops",
 			"repository": "https://github.com/cyverse-de/dockerops",
 			"vcs": "git",
-			"revision": "5225441b2fbee6c5b8508b4027c80037174e54db",
-			"branch": "master",
+			"revision": "9bd2fb7797d0d245da85676f0a904a7a99eb5831",
+			"branch": "beta",
 			"notests": true
 		},
 		{
@@ -39,6 +47,14 @@
 			"vcs": "git",
 			"revision": "b860e3566f5d1f6ad4803228cb8c1684c781add7",
 			"branch": "master",
+			"notests": true
+		},
+		{
+			"importpath": "github.com/cyverse-de/version",
+			"repository": "https://github.com/cyverse-de/version",
+			"vcs": "git",
+			"revision": "bf48f0d262aaa844cab4fe5b49834a74fb235bf3",
+			"branch": "dev",
 			"notests": true
 		},
 		{
@@ -168,6 +184,15 @@
 			"notests": true
 		},
 		{
+			"importpath": "github.com/docker/engine-api/client",
+			"repository": "https://github.com/docker/engine-api",
+			"vcs": "git",
+			"revision": "d505506c67611e8364526339452c20d6d0babcf6",
+			"branch": "master",
+			"path": "/client",
+			"notests": true
+		},
+		{
 			"importpath": "github.com/docker/engine-api/types",
 			"repository": "https://github.com/docker/engine-api",
 			"vcs": "git",
@@ -183,6 +208,24 @@
 			"revision": "990a1a1a70b0da4c4cb70e117971a4f0babfbf1a",
 			"branch": "master",
 			"path": "/nat",
+			"notests": true
+		},
+		{
+			"importpath": "github.com/docker/go-connections/sockets",
+			"repository": "https://github.com/docker/go-connections",
+			"vcs": "git",
+			"revision": "990a1a1a70b0da4c4cb70e117971a4f0babfbf1a",
+			"branch": "master",
+			"path": "/sockets",
+			"notests": true
+		},
+		{
+			"importpath": "github.com/docker/go-connections/tlsconfig",
+			"repository": "https://github.com/docker/go-connections",
+			"vcs": "git",
+			"revision": "990a1a1a70b0da4c4cb70e117971a4f0babfbf1a",
+			"branch": "master",
+			"path": "tlsconfig",
 			"notests": true
 		},
 		{
@@ -283,6 +326,24 @@
 			"revision": "3797cd8864994d713d909eda5e61ede8683fdc12",
 			"branch": "master",
 			"path": "/context",
+			"notests": true
+		},
+		{
+			"importpath": "golang.org/x/net/proxy",
+			"repository": "https://go.googlesource.com/net",
+			"vcs": "git",
+			"revision": "3797cd8864994d713d909eda5e61ede8683fdc12",
+			"branch": "master",
+			"path": "/proxy",
+			"notests": true
+		},
+		{
+			"importpath": "golang.org/x/sys/windows",
+			"repository": "https://go.googlesource.com/sys",
+			"vcs": "git",
+			"revision": "a646d33e2ee3172a661fc09bca23bb4889a41bc8",
+			"branch": "master",
+			"path": "/windows",
 			"notests": true
 		},
 		{
