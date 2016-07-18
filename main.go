@@ -2,18 +2,19 @@ package main
 
 import (
 	"bytes"
-	"configurate"
-	"dockerops"
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"logcabin"
-	"model"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/cyverse-de/configurate"
+	"github.com/cyverse-de/dockerops"
+	"github.com/cyverse-de/logcabin"
+	"github.com/cyverse-de/model"
 
 	"github.com/olebedev/config"
 )
