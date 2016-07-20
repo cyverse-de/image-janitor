@@ -37,7 +37,7 @@ func Client() (*dockerops.Docker, error) {
 
 func inittests(t *testing.T) {
 	var err error
-	cfg, err = configurate.Init("../test/test_config.yaml")
+	cfg, err = configurate.Init("test/test_config.yaml")
 	if err != nil {
 		t.Error(err)
 	}
@@ -56,7 +56,7 @@ func inittests(t *testing.T) {
 
 func TestJobFiles(t *testing.T) {
 	app := New(cfg)
-	listing, err := app.jobFiles("../test/")
+	listing, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
 	}
@@ -69,31 +69,31 @@ func TestJobFiles(t *testing.T) {
 	found1 := false
 	found2 := false
 	for _, filepath := range listing {
-		if filepath == "../test/00000000-0000-0000-0000-000000000000.json" {
+		if filepath == "test/00000000-0000-0000-0000-000000000000.json" {
 			found0 = true
 		}
-		if filepath == "../test/00000000-0000-0000-0000-000000000001.json" {
+		if filepath == "test/00000000-0000-0000-0000-000000000001.json" {
 			found1 = true
 		}
-		if filepath == "../test/00000000-0000-0000-0000-000000000002.json" {
+		if filepath == "test/00000000-0000-0000-0000-000000000002.json" {
 			found2 = true
 		}
 	}
 	if !found0 {
-		t.Error("Path ../test/00000000-0000-0000-0000-000000000000.json was not found")
+		t.Error("Path test/00000000-0000-0000-0000-000000000000.json was not found")
 	}
 	if !found1 {
-		t.Error("Path ../test/00000000-0000-0000-0000-000000000001.json was not found")
+		t.Error("Path test/00000000-0000-0000-0000-000000000001.json was not found")
 	}
 	if !found2 {
-		t.Error("Path ../test/00000000-0000-0000-0000-000000000002.json was not found")
+		t.Error("Path test/00000000-0000-0000-0000-000000000002.json was not found")
 	}
 }
 
 func TestJobs(t *testing.T) {
 	inittests(t)
 	app := New(cfg)
-	paths, err := app.jobFiles("../test/")
+	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
 	}
@@ -133,7 +133,7 @@ func TestJobs(t *testing.T) {
 func TestJobImages(t *testing.T) {
 	inittests(t)
 	app := New(cfg)
-	paths, err := app.jobFiles("../test/")
+	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
 	}
@@ -168,7 +168,7 @@ func TestJobImages(t *testing.T) {
 func TestRemovableImages(t *testing.T) {
 	inittests(t)
 	app := New(cfg)
-	paths, err := app.jobFiles("../test/")
+	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
 	}
@@ -240,7 +240,7 @@ func TestRemoveUnusedImages(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	app.removeUnusedImages(client, "../test/")
+	app.removeUnusedImages(client, "test/")
 	images, err := client.Images()
 	if err != nil {
 		t.Error(err)
