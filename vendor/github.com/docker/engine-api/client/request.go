@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -105,8 +106,15 @@ func (cli *Client) sendClientRequest(ctx context.Context, method, path string, q
 
 	resp, err := cancellable.Do(ctx, cli.transport, req)
 	if err != nil {
-		if isTimeout(err) || strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "dial unix") {
+		if err, ok := err.(net.Error); ok && !err.Temporary() {
 			return serverResp, ErrConnectionFailed
+		}
+
+		// Don't decorate context sentinel errors; users may be comparing to
+		// them directly.
+		switch err {
+		case context.Canceled, context.DeadlineExceeded:
+			return serverResp, err
 		}
 
 		if !cli.transport.Secure() && strings.Contains(err.Error(), "malformed HTTP response") {
@@ -191,17 +199,4 @@ func ensureReaderClosed(response *serverResponse) {
 		io.CopyN(ioutil.Discard, response.body, 512)
 		response.body.Close()
 	}
-}
-
-func isTimeout(err error) bool {
-	type timeout interface {
-		Timeout() bool
-	}
-	e := err
-	switch urlErr := err.(type) {
-	case *url.Error:
-		e = urlErr.Err
-	}
-	t, ok := e.(timeout)
-	return ok && t.Timeout()
 }
