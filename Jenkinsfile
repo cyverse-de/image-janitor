@@ -1,3 +1,4 @@
+#!groovy
 def repo = "image-janitor"
 def dockerUser = "discoenv"
 
