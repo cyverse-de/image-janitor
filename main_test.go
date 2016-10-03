@@ -6,14 +6,13 @@ import (
 
 	"github.com/cyverse-de/configurate"
 	"github.com/cyverse-de/dockerops"
+	"github.com/spf13/viper"
 
 	"golang.org/x/net/context"
-
-	"github.com/olebedev/config"
 )
 
 var (
-	cfg *config.Config
+	cfg *viper.Viper
 )
 
 func shouldrun() bool {
