@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyverse-de/messaging"
 	"github.com/cyverse-de/version"
+	"github.com/spf13/viper"
 
 	"golang.org/x/net/context"
 
@@ -19,8 +21,6 @@ import (
 	"github.com/cyverse-de/dockerops"
 	"github.com/cyverse-de/logcabin"
 	"github.com/cyverse-de/model"
-
-	"github.com/olebedev/config"
 )
 
 var (
@@ -29,11 +29,12 @@ var (
 
 // ImageJanitor contains application state for image-janitor
 type ImageJanitor struct {
-	cfg *config.Config
+	cfg    *viper.Viper
+	client *messaging.Client
 }
 
 // New returns a *ImageJanitor
-func New(cfg *config.Config) *ImageJanitor {
+func New(cfg *viper.Viper) *ImageJanitor {
 	return &ImageJanitor{
 		cfg: cfg,
 	}
@@ -245,7 +246,7 @@ func main() {
 		cfgPath       = flag.String("config", "/etc/jobservices.yml", "Path to the config.")
 		readFrom      = flag.String("read-from", "/opt/image-janitor", "The directory that job files are read from.")
 		dockerURI     = flag.String("docker", "unix:///var/run/docker.sock", "The URI for connecting to docker.")
-		cfg           *config.Config
+		cfg           *viper.Viper
 		err           error
 		timerDuration time.Duration
 	)

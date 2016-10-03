@@ -16,14 +16,14 @@ import (
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/filters"
-	"github.com/olebedev/config"
+	"github.com/spf13/viper"
 )
 
 // Docker provides operations that runner needs from the docker client.
 type Docker struct {
 	Client        *client.Client
 	TransferImage string
-	cfg           *config.Config
+	cfg           *viper.Viper
 	ctx           context.Context
 }
 
@@ -50,7 +50,7 @@ const (
 
 // NewDocker returns a *Docker that connects to the docker client listening at
 // 'uri'.
-func NewDocker(ctx context.Context, cfg *config.Config, uri string) (*Docker, error) {
+func NewDocker(ctx context.Context, cfg *viper.Viper, uri string) (*Docker, error) {
 	defaultHeaders := map[string]string{"User-Agent": "cyverse-road-runner-1.0"}
 	cl, err := client.NewClient(uri, "v1.23", nil, defaultHeaders)
 	if err != nil {
@@ -501,13 +501,9 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 	hostConfig := &container.HostConfig{}
 	invID := job.InvocationID
 
-	if image, err = d.cfg.String("porklock.image"); err != nil {
-		return "", err
-	}
+	image = d.cfg.GetString("porklock.image")
 
-	if tag, err = d.cfg.String("porklock.tag"); err != nil {
-		return "", err
-	}
+	tag = d.cfg.GetString("porklock.tag")
 
 	if err = d.Pull(image, tag); err != nil {
 		return "", err
@@ -580,13 +576,9 @@ func (d *Docker) CreateUploadContainer(job *model.Job) (string, error) {
 	config := &container.Config{}
 	hostConfig := &container.HostConfig{}
 
-	if image, err = d.cfg.String("porklock.image"); err != nil {
-		return "", err
-	}
+	image = d.cfg.GetString("porklock.image")
 
-	if tag, err = d.cfg.String("porklock.tag"); err != nil {
-		return "", err
-	}
+	tag = d.cfg.GetString("porklock.tag")
 
 	if err = d.Pull(image, tag); err != nil {
 		return "", err
