@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/cyverse-de/messaging"
 	"github.com/cyverse-de/version"
+	"github.com/johnworth/events/ping"
 	"github.com/spf13/viper"
+	"github.com/streadway/amqp"
 
 	"golang.org/x/net/context"
 
@@ -26,6 +29,9 @@ import (
 var (
 	filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
 )
+
+const pingKey = "events.image-janitor.ping"
+const pongKey = "events.image-janitor.pong"
 
 // ImageJanitor contains application state for image-janitor
 type ImageJanitor struct {
@@ -239,16 +245,44 @@ func (i *ImageJanitor) readExcludes(readFrom string) (map[string]bool, error) {
 	return retval, nil
 }
 
+func (i *ImageJanitor) eventsHandler(delivery amqp.Delivery) {
+	if err := delivery.Ack(false); err != nil {
+		logcabin.Error.Print(err)
+	}
+
+	if delivery.RoutingKey == pingKey {
+		i.pingHandler(delivery)
+		return
+	}
+}
+
+func (i *ImageJanitor) pingHandler(delivery amqp.Delivery) {
+	logcabin.Info.Println("Received ping")
+
+	out, err := json.Marshal(&ping.Pong{})
+	if err != nil {
+		logcabin.Error.Print(err)
+	}
+
+	logcabin.Info.Println("Sent pong")
+
+	if err = i.client.Publish(pongKey, out); err != nil {
+		logcabin.Error.Print(err)
+	}
+}
+
 func main() {
 	var (
-		showVersion   = flag.Bool("version", false, "Print version information.")
-		interval      = flag.String("interval", "1m", "Time between clean up attempts.")
-		cfgPath       = flag.String("config", "/etc/jobservices.yml", "Path to the config.")
-		readFrom      = flag.String("read-from", "/opt/image-janitor", "The directory that job files are read from.")
-		dockerURI     = flag.String("docker", "unix:///var/run/docker.sock", "The URI for connecting to docker.")
-		cfg           *viper.Viper
-		err           error
-		timerDuration time.Duration
+		showVersion      = flag.Bool("version", false, "Print version information.")
+		interval         = flag.String("interval", "1m", "Time between clean up attempts.")
+		cfgPath          = flag.String("config", "/etc/jobservices.yml", "Path to the config.")
+		readFrom         = flag.String("read-from", "/opt/image-janitor", "The directory that job files are read from.")
+		dockerURI        = flag.String("docker", "unix:///var/run/docker.sock", "The URI for connecting to docker.")
+		eventsQueue      = flag.String("events-queue", "image_janitor_events", "The AMQP queue name for image-janitor events")
+		eventsRoutingKey = flag.String("events-key", "events.image-janitor.*", "The routing key to use to listen for events")
+		cfg              *viper.Viper
+		err              error
+		timerDuration    time.Duration
 	)
 
 	flag.Parse()
@@ -282,13 +316,35 @@ func main() {
 	}
 	r.Close()
 
-	cfg, err = configurate.Init(*cfgPath)
+	cfg, err = configurate.InitDefaults(*cfgPath, configurate.JobServicesDefaults)
 	if err != nil {
 		logcabin.Error.Fatal(err)
 	}
 	logcabin.Info.Printf("Done reading config from %s", *cfgPath)
 
+	amqpURI := cfg.GetString("amqp.uri")
+	exchangeName := cfg.GetString("amqp.exchange.name")
+	exchangeType := cfg.GetString("amqp.exchange.type")
+
 	app := New(cfg)
+
+	app.client, err = messaging.NewClient(amqpURI, false)
+	if err != nil {
+		logcabin.Error.Fatal(err)
+	}
+	defer app.client.Close()
+
+	go app.client.Listen()
+
+	app.client.SetupPublishing(exchangeName)
+
+	app.client.AddConsumer(
+		exchangeName,
+		exchangeType,
+		*eventsQueue,
+		*eventsRoutingKey,
+		app.eventsHandler,
+	)
 
 	logcabin.Info.Printf("Connecting to Docker at %s", *dockerURI)
 	client, err := dockerops.NewDocker(context.Background(), cfg, *dockerURI)
