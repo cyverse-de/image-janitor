@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -24,6 +25,68 @@ func shouldrun() bool {
 
 func uri() string {
 	return "http://dind:2375"
+}
+
+type DockerTest struct {
+	removedImages   []string
+	images          map[string]string
+	danglingImages  map[string]string
+	removedImageIDs []string
+}
+
+func NewDockerTest() *DockerTest {
+	return &DockerTest{
+		removedImages: make([]string, 0),
+		images: map[string]string{
+			"1": "alpine:latest",
+			"2": "test00:tag00",
+			"3": "test01:tag01",
+			"4": "test02:tag02",
+		},
+		danglingImages: map[string]string{
+			"5": "d_test00:tag00",
+			"6": "d_test01:tag01",
+			"7": "d_test02:tag02",
+		},
+		removedImageIDs: make([]string, 0),
+	}
+}
+
+func (d *DockerTest) SafelyRemoveImage(name, tag string) error {
+	img := fmt.Sprintf("%s:%s", name, tag)
+	for k, v := range d.images {
+		if v == img {
+			delete(d.images, k)
+		}
+	}
+	d.removedImages = append(d.removedImages, fmt.Sprintf("%s:%s", name, tag))
+	return nil
+}
+
+func (d *DockerTest) Images() ([]string, error) {
+	var retval []string
+	for _, v := range d.images {
+		retval = append(retval, v)
+	}
+	return retval, nil
+}
+
+func (d *DockerTest) DanglingImages() ([]string, error) {
+	var retval []string
+	for _, v := range d.danglingImages {
+		retval = append(retval, v)
+	}
+	return retval, nil
+}
+
+func (d *DockerTest) SafelyRemoveImageByID(id string) error {
+	for k := range d.images {
+		if k == id {
+			delete(d.images, k)
+		}
+	}
+	d.removedImageIDs = append(d.removedImageIDs, id)
+	return nil
 }
 
 func Client() (*dockerops.Docker, error) {
@@ -195,19 +258,9 @@ func TestRemovableImages(t *testing.T) {
 }
 
 func TestRemoveImage(t *testing.T) {
-	if !shouldrun() {
-		return
-	}
 	app := New(cfg)
-	client, err := Client()
-	if err != nil {
-		t.Error(err)
-	}
-	err = client.Pull("alpine", "latest")
-	if err != nil {
-		t.Error(err)
-	}
-	err = app.removeImage(client, "alpine:latest")
+	client := NewDockerTest()
+	err := app.removeImage(client, "alpine:latest")
 	if err != nil {
 		t.Error(err)
 	}
@@ -227,18 +280,8 @@ func TestRemoveImage(t *testing.T) {
 }
 
 func TestRemoveUnusedImages(t *testing.T) {
-	if !shouldrun() {
-		return
-	}
 	app := New(cfg)
-	client, err := Client()
-	if err != nil {
-		t.Error(err)
-	}
-	err = client.Pull("alpine", "latest")
-	if err != nil {
-		t.Error(err)
-	}
+	client := NewDockerTest()
 	app.removeUnusedImages(client, "test/")
 	images, err := client.Images()
 	if err != nil {

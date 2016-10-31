@@ -33,6 +33,15 @@ var (
 const pingKey = "events.image-janitor.ping"
 const pongKey = "events.image-janitor.pong"
 
+// DockerClient is the subset of the docker client functions that image-janitor
+// uses.
+type DockerClient interface {
+	SafelyRemoveImage(string, string) error
+	Images() ([]string, error)
+	DanglingImages() ([]string, error)
+	SafelyRemoveImageByID(string) error
+}
+
 // ImageJanitor contains application state for image-janitor
 type ImageJanitor struct {
 	cfg    *viper.Viper
@@ -139,7 +148,7 @@ func (i *ImageJanitor) removableImages(jobImages, dockerImages []string) []strin
 
 // removeImage uses the dockerops.Docker client to safely remove the specified
 // image.
-func (i *ImageJanitor) removeImage(client *dockerops.Docker, image string) error {
+func (i *ImageJanitor) removeImage(client DockerClient, image string) error {
 	var (
 		err       error
 		parts     []string
@@ -160,7 +169,7 @@ func (i *ImageJanitor) removeImage(client *dockerops.Docker, image string) error
 
 // removeUnusedImages removes all of the images returned by removeImage() from
 // the connected Docker Engine.
-func (i *ImageJanitor) removeUnusedImages(client *dockerops.Docker, readFrom string) {
+func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) {
 	logcabin.Info.Println("Removing unused Docker images")
 
 	listing, err := i.jobFiles(readFrom)
