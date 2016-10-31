@@ -1,30 +1,65 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/cyverse-de/configurate"
-	"github.com/cyverse-de/dockerops"
+	"github.com/cyverse-de/messaging"
 	"github.com/spf13/viper"
-
-	"golang.org/x/net/context"
+	"github.com/streadway/amqp"
 )
 
 var (
 	cfg *viper.Viper
 )
 
-func shouldrun() bool {
-	if os.Getenv("RUN_INTEGRATION_TESTS") != "" {
-		return true
-	}
-	return false
+type MockConsumer struct {
+	exchange     string
+	exchangeType string
+	queue        string
+	key          string
+	handler      messaging.MessageHandler
 }
 
-func uri() string {
-	return "http://dind:2375"
+type MockMessage struct {
+	key string
+	msg []byte
+}
+
+type MockMessenger struct {
+	consumers         []MockConsumer
+	publishedMessages []MockMessage
+	publishTo         []string
+	publishError      bool
+}
+
+func (m *MockMessenger) Close()  {}
+func (m *MockMessenger) Listen() {}
+
+func (m *MockMessenger) AddConsumer(exchange, exchangeType, queue, key string, handler messaging.MessageHandler) {
+	m.consumers = append(m.consumers, MockConsumer{
+		exchange:     exchange,
+		exchangeType: exchangeType,
+		queue:        queue,
+		key:          key,
+		handler:      handler,
+	})
+}
+
+func (m *MockMessenger) Publish(key string, msg []byte) error {
+	if m.publishError {
+		return errors.New("publish error")
+	}
+	m.publishedMessages = append(m.publishedMessages, MockMessage{key: key, msg: msg})
+	return nil
+}
+
+func (m *MockMessenger) SetupPublishing(exchange string) error {
+	m.publishTo = append(m.publishTo, exchange)
+	return nil
 }
 
 type DockerTest struct {
@@ -87,14 +122,6 @@ func (d *DockerTest) SafelyRemoveImageByID(id string) error {
 	}
 	d.removedImageIDs = append(d.removedImageIDs, id)
 	return nil
-}
-
-func Client() (*dockerops.Docker, error) {
-	client, err := dockerops.NewDocker(context.Background(), cfg, uri())
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
 }
 
 func inittests(t *testing.T) {
@@ -257,6 +284,29 @@ func TestRemovableImages(t *testing.T) {
 	}
 }
 
+func TestReadExcludes(t *testing.T) {
+	inittests(t)
+	app := New(cfg)
+	contents := [][]byte{
+		[]byte("line1"),
+		[]byte("line1\nline2\n"),
+		[]byte("line1\nline2\nline3"),
+		[]byte("\nline1\nline2\nline3\n"),
+	}
+	for _, content := range contents {
+		buf := bytes.NewBuffer(content)
+		excludes, err := app.readExcludes(buf)
+		if err != nil {
+			t.Errorf("err parsing excludes: %s", err)
+		}
+		for e := range excludes {
+			if e == "" {
+				t.Error("exclusion was an empty string")
+			}
+		}
+	}
+}
+
 func TestRemoveImage(t *testing.T) {
 	app := New(cfg)
 	client := NewDockerTest()
@@ -295,5 +345,43 @@ func TestRemoveUnusedImages(t *testing.T) {
 	}
 	if found {
 		t.Error("alpine:latest was found")
+	}
+}
+
+func TestEventsHandler(t *testing.T) {
+	inittests(t)
+	app := New(cfg)
+	client := &MockMessenger{
+		publishedMessages: make([]MockMessage, 0),
+	}
+	app.client = client
+	delivery := amqp.Delivery{
+		RoutingKey: pingKey,
+	}
+	app.eventsHandler(delivery)
+	if len(client.publishedMessages) != 1 {
+		t.Errorf("number of published messages was %d instead of 1", len(client.publishedMessages))
+	}
+	if client.publishedMessages[0].key != pongKey {
+		t.Errorf("key was %s instead of %s", client.publishedMessages[0].key, pongKey)
+	}
+}
+
+func TestPingHandler(t *testing.T) {
+	inittests(t)
+	app := New(cfg)
+	client := &MockMessenger{
+		publishedMessages: make([]MockMessage, 0),
+	}
+	app.client = client
+	delivery := amqp.Delivery{
+		RoutingKey: pingKey,
+	}
+	app.pingHandler(delivery)
+	if len(client.publishedMessages) != 1 {
+		t.Errorf("number of published messages was %d instead of 1", len(client.publishedMessages))
+	}
+	if client.publishedMessages[0].key != pongKey {
+		t.Errorf("key was %s instead of %s", client.publishedMessages[0].key, pongKey)
 	}
 }

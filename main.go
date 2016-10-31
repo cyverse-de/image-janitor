@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -42,10 +43,20 @@ type DockerClient interface {
 	SafelyRemoveImageByID(string) error
 }
 
+// Messenger defines an interface for handling AMQP operations. This is the
+// subset of functionality needed by job-status-recorder.
+type Messenger interface {
+	AddConsumer(string, string, string, string, messaging.MessageHandler)
+	Close()
+	Listen()
+	Publish(string, []byte) error
+	SetupPublishing(string) error
+}
+
 // ImageJanitor contains application state for image-janitor
 type ImageJanitor struct {
 	cfg    *viper.Viper
-	client *messaging.Client
+	client Messenger
 }
 
 // New returns a *ImageJanitor
@@ -205,10 +216,19 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 	}
 
 	rmables := i.removableImages(imagesFromJobs, imagesFromDocker)
-	excludes, err := i.readExcludes(readFrom)
+
+	excludesPath := path.Join(readFrom, "excludes")
+	excludesFile, err := os.Open(excludesPath)
+	if err != nil {
+		logcabin.Error.Printf("error opening excludes file: %s\n", err)
+	}
+	defer excludesFile.Close()
+
+	excludes, err := i.readExcludes(excludesFile)
 	if err != nil {
 		logcabin.Error.Println(err)
 	}
+
 	for _, removableImage := range rmables {
 		if _, ok := excludes[removableImage]; !ok {
 			logcabin.Info.Printf("Removing image %s...", removableImage)
@@ -237,18 +257,20 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 	}
 }
 
-func (i *ImageJanitor) readExcludes(readFrom string) (map[string]bool, error) {
+func (i *ImageJanitor) readExcludes(readFrom io.Reader) (map[string]bool, error) {
 	retval := make(map[string]bool)
 
-	excludesPath := path.Join(readFrom, "excludes")
-	excludesBytes, err := ioutil.ReadFile(excludesPath)
+	// excludesPath := path.Join(readFrom, "excludes")
+	excludesBytes, err := ioutil.ReadAll(readFrom)
 	if err != nil {
 		return retval, err
 	}
 
 	lines := bytes.Split(excludesBytes, []byte("\n"))
 	for _, line := range lines {
-		retval[string(line)] = true
+		if !bytes.Equal(line, []byte("")) {
+			retval[string(line)] = true
+		}
 	}
 
 	return retval, nil
@@ -261,7 +283,6 @@ func (i *ImageJanitor) eventsHandler(delivery amqp.Delivery) {
 
 	if delivery.RoutingKey == pingKey {
 		i.pingHandler(delivery)
-		return
 	}
 }
 
