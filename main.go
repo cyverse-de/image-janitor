@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyverse-de/go-events/jobevents"
 	"github.com/cyverse-de/go-events/ping"
 	"github.com/cyverse-de/messaging"
 	"github.com/cyverse-de/version"
-	"github.com/johnworth/go-events/jobevents"
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 

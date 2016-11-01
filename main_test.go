@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/cyverse-de/configurate"
+	"github.com/cyverse-de/go-events/jobevents"
 	"github.com/cyverse-de/messaging"
-	"github.com/johnworth/go-events/jobevents"
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 )
