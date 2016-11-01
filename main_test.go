@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/cyverse-de/configurate"
 	"github.com/cyverse-de/messaging"
+	"github.com/johnworth/go-events/jobevents"
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 )
@@ -383,5 +385,46 @@ func TestPingHandler(t *testing.T) {
 	}
 	if client.publishedMessages[0].key != pongKey {
 		t.Errorf("key was %s instead of %s", client.publishedMessages[0].key, pongKey)
+	}
+}
+
+func TestHostname(t *testing.T) {
+	h := hostname()
+	if h == "" {
+		t.Error("hostname was blank")
+	}
+}
+
+func TestEmit(t *testing.T) {
+	inittests(t)
+	app := New(cfg)
+	client := &MockMessenger{
+		publishedMessages: make([]MockMessage, 0),
+	}
+	app.client = client
+
+	if err := app.Emit("event", "message"); err != nil {
+		t.Errorf("error emitting event: %s", err)
+	}
+
+	mm := app.client.(*MockMessenger)
+	if len(mm.publishedMessages) != 1 {
+		t.Errorf("number of published messages was %d instead of 1", len(mm.publishedMessages))
+	}
+	if mm.publishedMessages[0].key != "events.image-janitor.event" {
+		t.Errorf("key was %s instead of events.image-janitor.event", mm.publishedMessages[0].key)
+	}
+	e := &jobevents.JobEvent{}
+	if err := json.Unmarshal(mm.publishedMessages[0].msg, e); err != nil {
+		t.Errorf("error unmarshalling message: %s", err)
+	}
+	if e.EventName != "event" {
+		t.Errorf("event name is %s instead of 'event'", e.EventName)
+	}
+	if e.Message != "message" {
+		t.Errorf("message is %s instead of 'message'", e.Message)
+	}
+	if e.Host == "" {
+		t.Error("host is blank")
 	}
 }

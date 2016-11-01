@@ -16,6 +16,7 @@ import (
 	"github.com/cyverse-de/go-events/ping"
 	"github.com/cyverse-de/messaging"
 	"github.com/cyverse-de/version"
+	"github.com/johnworth/go-events/jobevents"
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 
@@ -299,6 +300,29 @@ func (i *ImageJanitor) pingHandler(delivery amqp.Delivery) {
 	if err = i.client.Publish(pongKey, out); err != nil {
 		logcabin.Error.Print(err)
 	}
+}
+
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+// Emit sends out a event over amqp.
+func (i *ImageJanitor) Emit(event, message string) error {
+	e := &jobevents.JobEvent{
+		EventName: event,
+		Message:   message,
+		Host:      hostname(),
+	}
+	m, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	eventKey := fmt.Sprintf("events.image-janitor.%s", event)
+	return i.client.Publish(eventKey, m)
 }
 
 func main() {
