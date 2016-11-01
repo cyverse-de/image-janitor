@@ -234,9 +234,12 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 		if _, ok := excludes[removableImage]; !ok {
 			logcabin.Info.Printf("Removing image %s...", removableImage)
 			if err = i.removeImage(client, removableImage); err != nil {
-				logcabin.Error.Printf("Error removing image %s: %s", removableImage, err)
+				errmsg := fmt.Sprintf("error removing image %s: %s", removableImage, err)
+				logcabin.Error.Println(errmsg)
+				i.Emit("remove-image-error", errmsg)
 			} else {
 				logcabin.Info.Printf("Done removing image %s", removableImage)
+				i.Emit("remove-image", removableImage)
 			}
 		} else {
 			logcabin.Info.Printf("Skipping removal of %s", removableImage)

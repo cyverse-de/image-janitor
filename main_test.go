@@ -334,6 +334,10 @@ func TestRemoveImage(t *testing.T) {
 func TestRemoveUnusedImages(t *testing.T) {
 	app := New(cfg)
 	client := NewDockerTest()
+	amqp := &MockMessenger{
+		publishedMessages: make([]MockMessage, 0),
+	}
+	app.client = amqp
 	app.removeUnusedImages(client, "test/")
 	images, err := client.Images()
 	if err != nil {
@@ -347,6 +351,17 @@ func TestRemoveUnusedImages(t *testing.T) {
 	}
 	if found {
 		t.Error("alpine:latest was found")
+	}
+	mm := app.client.(*MockMessenger)
+	if len(mm.publishedMessages) != 4 {
+		t.Errorf("number of published messages was %d instead of 1", len(mm.publishedMessages))
+	}
+	if mm.publishedMessages[0].key != "events.image-janitor.remove-image" {
+		t.Errorf("key was %s instead of events.image-janitor.remove-image", mm.publishedMessages[0].key)
+	}
+	e := &jobevents.JobEvent{}
+	if err := json.Unmarshal(mm.publishedMessages[0].msg, e); err != nil {
+		t.Errorf("error unmarshalling message: %s", err)
 	}
 }
 
