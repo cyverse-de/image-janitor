@@ -102,7 +102,8 @@ func (i *ImageJanitor) jobs(filepaths []string) ([]model.Job, error) {
 
 		job, err := model.NewFromData(i.cfg, data)
 		if err != nil {
-			return retval, err
+			logcabin.Error.Printf("error parsing %s, continuing: %s", filepath, err)
+			continue
 		}
 
 		retval = append(retval, *job)
