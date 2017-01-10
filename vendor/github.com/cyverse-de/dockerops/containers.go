@@ -7,15 +7,16 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/net/context"
+	"context"
 
 	"github.com/cyverse-de/logcabin"
 	"github.com/cyverse-de/model"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/engine-api/client"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/container"
-	"github.com/docker/engine-api/types/filters"
+	nat "github.com/docker/go-connections/nat"
 	"github.com/spf13/viper"
 )
 
@@ -104,8 +105,8 @@ func (d *Docker) ContainersWithLabel(key, value string, all bool) ([]string, err
 	f := filters.NewArgs()
 	f.Add("label", fmt.Sprintf("%s=%s", key, value))
 	opts := types.ContainerListOptions{
-		All:    all,
-		Filter: f,
+		All:     all,
+		Filters: f,
 	}
 	list, err := d.Client.ContainerList(d.ctx, opts)
 	if err != nil {
@@ -162,9 +163,11 @@ func (d *Docker) NukeContainerByName(name string) error {
 
 // ImageID returns the image ID as a string for image with the given name and tag.
 func (d *Docker) ImageID(name, tag string) (string, error) {
+	imageFilter := filters.NewArgs()
+	imageFilter.Add("name", name)
 	images, err := d.Client.ImageList(d.ctx, types.ImageListOptions{
-		MatchName: name,
-		All:       true,
+		Filters: imageFilter,
+		All:     true,
 	})
 	if err != nil {
 		return "", nil
@@ -259,14 +262,10 @@ func (d *Docker) DanglingImages() ([]string, error) {
 	return retval, nil
 }
 
-// Pull will pull an image indicated by name and tag. Name is in the format
-// "registry/repository". If the name doesn't contain a / then the registry
-// is assumed to be "base" and the provided name will be set to repository.
-// This assumes that no authentication is required.
-func (d *Docker) Pull(name, tag string) error {
+func (d *Docker) basePull(name, tag string, opts types.ImagePullOptions) error {
 	imageRef := fmt.Sprintf("%s:%s", name, tag)
 
-	body, err := d.Client.ImagePull(d.ctx, imageRef, types.ImagePullOptions{})
+	body, err := d.Client.ImagePull(d.ctx, imageRef, opts)
 	defer body.Close()
 	if err != nil {
 		return err
@@ -274,6 +273,22 @@ func (d *Docker) Pull(name, tag string) error {
 
 	_, err = io.Copy(os.Stdout, body)
 	return err
+}
+
+// Pull will pull an image indicated by name and tag. Name is in the format
+// "registry/repository". If the name doesn't contain a / then the registry
+// is assumed to be "base" and the provided name will be set to repository.
+// This assumes that no authentication is required.
+func (d *Docker) Pull(name, tag string) error {
+	return d.basePull(name, tag, types.ImagePullOptions{})
+}
+
+// PullAuthenticated is Pull, but with a third argument 'auth' which should be
+// the RegistryAuth needed by docker: base64(username + ':' + password)
+func (d *Docker) PullAuthenticated(name, tag, auth string) error {
+	return d.basePull(name, tag, types.ImagePullOptions{
+		RegistryAuth: auth,
+	})
 }
 
 func pathExists(p string) (bool, error) {
@@ -442,7 +457,7 @@ func (d *Docker) Attach(containerID string, outputWriter, errorWriter io.Writer)
 	return nil
 }
 
-func (d *Docker) runContainer(containerID string, stdout, stderr io.Writer) (int, error) {
+func (d *Docker) runContainer(containerID string, stdout, stderr io.Writer) (int64, error) {
 	var err error
 
 	if err = d.Attach(containerID, stdout, stderr); err != nil {
@@ -458,10 +473,26 @@ func (d *Docker) runContainer(containerID string, stdout, stderr io.Writer) (int
 	return d.Client.ContainerWait(d.ctx, containerID)
 }
 
+// InspectContainer returns a types.ContainerJSON with details about the container.
+func (d *Docker) InspectContainer(containerID string) (types.ContainerJSON, error) {
+	return d.Client.ContainerInspect(d.ctx, containerID)
+}
+
+// ContainerPortMapping returns a *nat.PortMap of all of the port mappings. This
+// is basically just a convenience function that calls InspectContainer and
+// roots through the return value for the port mapping.
+func (d *Docker) ContainerPortMapping(containerID string) (nat.PortMap, error) {
+	inspection, err := d.InspectContainer(containerID)
+	if err != nil {
+		return nil, err
+	}
+	return inspection.NetworkSettings.Ports, err
+}
+
 // RunStep will run the steps in a job. If a step fails, the function will
 // return with a non-zero exit code. If an error occurs, the function will
 // return with a non-zero exit code and a non-nil error.
-func (d *Docker) RunStep(step *model.Step, invID string, idx int) (int, error) {
+func (d *Docker) RunStep(step *model.Step, invID string, idx int) (int64, error) {
 	var (
 		err         error
 		containerID string
@@ -488,12 +519,21 @@ func (d *Docker) RunStep(step *model.Step, invID string, idx int) (int, error) {
 	return d.runContainer(containerID, stdoutFile, stderrFile)
 }
 
+// PorkPull will pull the porklock image.
+func (d *Docker) PorkPull() error {
+	image := d.cfg.GetString("porklock.image")
+
+	tag := d.cfg.GetString("porklock.tag")
+
+	return d.Pull(image, tag)
+}
+
 // CreateDownloadContainer creates a container that can be used to download
 // input files.
 func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput, idx string) (string, error) {
 	var (
 		wd, name, image, tag string
-		response             types.ContainerCreateResponse
+		response             container.ContainerCreateCreatedBody
 		err                  error
 	)
 
@@ -501,11 +541,7 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 	hostConfig := &container.HostConfig{}
 	invID := job.InvocationID
 
-	image = d.cfg.GetString("porklock.image")
-
-	tag = d.cfg.GetString("porklock.tag")
-
-	if err = d.Pull(image, tag); err != nil {
+	if err = d.PorkPull(); err != nil {
 		return "", err
 	}
 
@@ -538,7 +574,7 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 
 // DownloadInputs will run the docker containers that down input files into
 // the local working directory.
-func (d *Docker) DownloadInputs(job *model.Job, input *model.StepInput, idx int) (int, error) {
+func (d *Docker) DownloadInputs(job *model.Job, input *model.StepInput, idx int) (int64, error) {
 	var (
 		err                    error
 		containerID            string
@@ -570,17 +606,13 @@ func (d *Docker) CreateUploadContainer(job *model.Job) (string, error) {
 	var (
 		err                  error
 		image, tag, name, wd string
-		response             types.ContainerCreateResponse
+		response             container.ContainerCreateCreatedBody
 	)
 
 	config := &container.Config{}
 	hostConfig := &container.HostConfig{}
 
-	image = d.cfg.GetString("porklock.image")
-
-	tag = d.cfg.GetString("porklock.tag")
-
-	if err = d.Pull(image, tag); err != nil {
+	if err = d.PorkPull(); err != nil {
 		return "", err
 	}
 
@@ -611,7 +643,7 @@ func (d *Docker) CreateUploadContainer(job *model.Job) (string, error) {
 }
 
 // UploadOutputs will upload files to iRODS from the local working directory.
-func (d *Docker) UploadOutputs(job *model.Job) (int, error) {
+func (d *Docker) UploadOutputs(job *model.Job) (int64, error) {
 	var (
 		err                    error
 		containerID            string
@@ -639,7 +671,7 @@ func (d *Docker) CreateDataContainer(vf *model.VolumesFrom, invID string) (strin
 	var (
 		err      error
 		rw, name string
-		response types.ContainerCreateResponse
+		response container.ContainerCreateCreatedBody
 	)
 
 	config := &container.Config{}
