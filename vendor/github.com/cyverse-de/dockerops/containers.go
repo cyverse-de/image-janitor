@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	nat "github.com/docker/go-connections/nat"
@@ -31,6 +33,14 @@ type Docker struct {
 // WORKDIR is the path to the working directory inside all of the containers
 // that are run as part of a job.
 const WORKDIR = "/de-app-work"
+
+// CONFIGDIR is the path to the local configs inside the containers that are
+// used to transfer files into and out of the job.
+const CONFIGDIR = "/configs"
+
+// VOLUMEDIR is the name of the directory that is used for the working directory
+// volume.
+const VOLUMEDIR = "workingvolume"
 
 const (
 	// TypeLabel is the label key applied to every container.
@@ -163,11 +173,8 @@ func (d *Docker) NukeContainerByName(name string) error {
 
 // ImageID returns the image ID as a string for image with the given name and tag.
 func (d *Docker) ImageID(name, tag string) (string, error) {
-	imageFilter := filters.NewArgs()
-	imageFilter.Add("name", name)
 	images, err := d.Client.ImageList(d.ctx, types.ImageListOptions{
-		Filters: imageFilter,
-		All:     true,
+		All: true,
 	})
 	if err != nil {
 		return "", nil
@@ -201,6 +208,23 @@ func (d *Docker) removeImage(id string, force, prune bool) error {
 // SafelyRemoveImageByID will delete the image referenced by its ID.
 func (d *Docker) SafelyRemoveImageByID(id string) error {
 	return d.removeImage(id, false, false)
+}
+
+// InspectImage will return a types.ImageInspect instance filled out for the
+// image with the provided ID.
+func (d *Docker) InspectImage(id string) (types.ImageInspect, error) {
+	retval, _, err := d.Client.ImageInspectWithRaw(d.ctx, id)
+	return retval, err
+}
+
+// ExposedPortsForImage returns a nat.PortSet for the image with the given ID.
+// Convenience function that uses InspectImage().
+func (d *Docker) ExposedPortsForImage(id string) (nat.PortSet, error) {
+	inspection, err := d.InspectImage(id)
+	if err != nil {
+		return nil, err
+	}
+	return inspection.Config.ExposedPorts, err
 }
 
 // SafelyRemoveImage will delete the image with force set to false
@@ -302,6 +326,56 @@ func pathExists(p string) (bool, error) {
 	return true, err
 }
 
+// CreateWorkingDirVolume creates a new volume that is used to contain the
+// working directory for a job.
+func (d *Docker) CreateWorkingDirVolume(volumeID string) (types.Volume, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return types.Volume{}, err
+	}
+
+	path := path.Join(wd, VOLUMEDIR)
+
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			logcabin.Info.Printf("creating volume directory: %s\n", path)
+			if err = os.MkdirAll(path, 0755); err != nil {
+				logcabin.Info.Printf("error creating path %s: %s", path, err)
+				return types.Volume{}, err
+			}
+		}
+	}
+
+	return d.Client.VolumeCreate(d.ctx, volume.VolumesCreateBody{
+		Driver: "local",
+		DriverOpts: map[string]string{
+			"type":   "none",
+			"device": path,
+			"o":      "bind",
+		},
+		Name: volumeID,
+	})
+}
+
+// VolumeExists return true if the volume exists.
+func (d *Docker) VolumeExists(volumeID string) (bool, error) {
+	list, err := d.Client.VolumeList(d.ctx, filters.NewArgs())
+	if err != nil {
+		return false, err
+	}
+	for _, l := range list.Volumes {
+		if l.Name == volumeID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// RemoveVolume deletes the working directory volume.
+func (d *Docker) RemoveVolume(volumeID string) error {
+	return d.Client.VolumeRemove(d.ctx, volumeID, true)
+}
+
 // CreateContainerFromStep creates a container from a step in the a job.
 // Returns the ID of the created container.
 func (d *Docker) CreateContainerFromStep(step *model.Step, invID string) (string, error) {
@@ -331,6 +405,9 @@ func (d *Docker) CreateContainerFromStep(step *model.Step, invID string) (string
 			config.NetworkDisabled = true
 		}
 		hostConfig.NetworkMode = container.NetworkMode(step.Component.Container.NetworkMode)
+	}
+	if !config.NetworkDisabled {
+		hostConfig.PublishAllPorts = true
 	}
 
 	// Set the name of the image for the container.
@@ -383,16 +460,32 @@ func (d *Docker) CreateContainerFromStep(step *model.Step, invID string) (string
 		}
 	}
 
-	// Add the hosts working directory as a binding to the container's
-	// working directory.
-	wd, err := os.Getwd()
+	// Check to see if a working directory volume exists
+	hasVolume, err := d.VolumeExists(invID)
 	if err != nil {
 		return "", err
 	}
-	hostConfig.Binds = append(
-		hostConfig.Binds,
-		fmt.Sprintf("%s:%s:%s", wd, step.Component.Container.WorkingDirectory(), "rw"),
-	)
+
+	// if the working directory volume exists, use it.
+	if hasVolume {
+		hostConfig.Binds = append(
+			hostConfig.Binds,
+			fmt.Sprintf("%s:%s:%s", invID, step.Component.Container.WorkingDirectory(), "rw"),
+		)
+	} else {
+		// Otherwise, bind the local working directory into the container as the working directory.
+		var wd string
+		// Add the hosts working directory as a binding to the container's
+		// working directory.
+		wd, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		hostConfig.Binds = append(
+			hostConfig.Binds,
+			fmt.Sprintf("%s:%s:%s", wd, step.Component.Container.WorkingDirectory(), "rw"),
+		)
+	}
 
 	logcabin.Info.Printf("Volumes: %#v", config.Volumes)
 	logcabin.Info.Printf("Binds: %#v", hostConfig.Binds)
@@ -407,6 +500,8 @@ func (d *Docker) CreateContainerFromStep(step *model.Step, invID string) (string
 		hostConfig.Devices = append(hostConfig.Devices, device)
 	}
 
+	// Set the default working directory in the container to the path defined in
+	// the job JSON.
 	config.WorkingDir = step.Component.Container.WorkingDirectory()
 
 	for k, v := range step.Environment {
@@ -419,6 +514,9 @@ func (d *Docker) CreateContainerFromStep(step *model.Step, invID string) (string
 
 	hostConfig.LogConfig = container.LogConfig{Type: "none"}
 	containerName := step.Component.Container.Name
+
+	logcabin.Info.Printf("hostconfig: %#v\n", hostConfig)
+	logcabin.Info.Printf("config: %#v\n", config)
 
 	response, err := d.Client.ContainerCreate(d.ctx, config, hostConfig, nil, containerName)
 	if err == nil {
@@ -494,8 +592,8 @@ func (d *Docker) ContainerPortMapping(containerID string) (nat.PortMap, error) {
 // return with a non-zero exit code and a non-nil error.
 func (d *Docker) RunStep(step *model.Step, invID string, idx int) (int64, error) {
 	var (
-		err         error
-		containerID string
+		err             error
+		wd, containerID string
 	)
 
 	stepIdx := strconv.Itoa(idx)
@@ -504,13 +602,21 @@ func (d *Docker) RunStep(step *model.Step, invID string, idx int) (int64, error)
 		return -1, err
 	}
 
-	stdoutFile, err := os.Create(step.Stdout(stepIdx))
+	wd, err = os.Getwd()
+	if err != nil {
+		return -1, err
+	}
+	stdoutpath := path.Join(wd, VOLUMEDIR, step.Stdout(stepIdx))
+	logcabin.Info.Printf("path to the step stdout log file: %s\n", stdoutpath)
+	stdoutFile, err := os.Create(stdoutpath)
 	if err != nil {
 		return -1, err
 	}
 	defer stdoutFile.Close()
 
-	stderrFile, err := os.Create(step.Stderr(stepIdx))
+	stderrpath := path.Join(wd, VOLUMEDIR, step.Stderr(stepIdx))
+	logcabin.Info.Printf("path to the step stderr log file: %s\n", stderrpath)
+	stderrFile, err := os.Create(stderrpath)
 	if err != nil {
 		return -1, err
 	}
@@ -541,25 +647,61 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 	hostConfig := &container.HostConfig{}
 	invID := job.InvocationID
 
+	image = d.cfg.GetString("porklock.image")    // Used to pull the correct porklock image.
+	tag = d.cfg.GetString("porklock.tag")        // Used to pull the correct porklock image.
+	vaultaddress := d.cfg.GetString("vault.url") // Used by porklock to pull the iRODS config from Vault.
+	vaulttoken := d.cfg.GetString("vault.token") // Used by porklock to pull the iRODS config from Vault.
+
+	// The porklock image is needed before a container can be created from it.
 	if err = d.PorkPull(); err != nil {
 		return "", err
 	}
 
+	// It makes little sense to have only one of these set
+	if vaultaddress != "" && vaulttoken != "" {
+		config.Env = append(config.Env, fmt.Sprintf("%s=%s", "VAULT_ADDR", vaultaddress))
+		config.Env = append(config.Env, fmt.Sprintf("%s=%s", "VAULT_TOKEN", vaulttoken))
+	}
+
+	// This should always be present, so it's okay to always add it.
+	config.Env = append(config.Env, fmt.Sprintf("%s=%s", "JOB_UUID", invID))
+
 	config.Image = fmt.Sprintf("%s:%s", image, tag)
 	hostConfig.LogConfig = container.LogConfig{Type: "none"}
+
+	config.WorkingDir = WORKDIR
 
 	// make sure the host working dir is mounted and make it the default
 	// working dir inside the container.
 	if wd, err = os.Getwd(); err != nil {
 		return "", err
 	}
-	config.WorkingDir = WORKDIR
-	hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, WORKDIR, "rw"))
+
+	// Check to see if a working directory volume exists
+	hasVolume, err := d.VolumeExists(invID)
+	if err != nil {
+		return "", err
+	}
+
+	// if the working directory volume exists, use it.
+	if hasVolume {
+		hostConfig.Binds = append(
+			hostConfig.Binds,
+			fmt.Sprintf("%s:%s:%s", invID, WORKDIR, "rw"),
+		)
+	} else {
+		hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, WORKDIR, "rw"))
+	}
+
+	hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, CONFIGDIR, "rw"))
 
 	config.Labels = make(map[string]string)
 	config.Labels[model.DockerLabelKey] = invID
 	config.Labels[TypeLabel] = strconv.Itoa(InputContainer)
 	config.Cmd = input.Arguments(job.Submitter, job.FileMetadata)
+
+	logcabin.Info.Printf("hostconfig: %#v\n", hostConfig)
+	logcabin.Info.Printf("config: %#v\n", config)
 
 	name = fmt.Sprintf("input-%s-%s", idx, invID)
 	if response, err = d.Client.ContainerCreate(d.ctx, config, hostConfig, nil, name); err == nil {
@@ -568,8 +710,11 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 			logcabin.Info.Printf("Warning creating %s: %s", response.ID, warning)
 		}
 	}
+	if err != nil {
+		logcabin.Error.Print(err)
+	}
 
-	return response.ID, nil
+	return response.ID, err
 }
 
 // DownloadInputs will run the docker containers that down input files into
@@ -577,7 +722,7 @@ func (d *Docker) CreateDownloadContainer(job *model.Job, input *model.StepInput,
 func (d *Docker) DownloadInputs(job *model.Job, input *model.StepInput, idx int) (int64, error) {
 	var (
 		err                    error
-		containerID            string
+		wd, containerID        string
 		stdoutFile, stderrFile io.WriteCloser
 	)
 
@@ -587,12 +732,20 @@ func (d *Docker) DownloadInputs(job *model.Job, input *model.StepInput, idx int)
 		return -1, err
 	}
 
-	if stdoutFile, err = os.Create(input.Stdout(inputIdx)); err != nil {
+	if wd, err = os.Getwd(); err != nil {
+		return -1, err
+	}
+
+	stdoutpath := path.Join(wd, VOLUMEDIR, input.Stdout(inputIdx))
+	logcabin.Info.Printf("creating stdout input log at %s\n", stdoutpath)
+	if stdoutFile, err = os.Create(stdoutpath); err != nil {
 		return -1, err
 	}
 	defer stdoutFile.Close()
 
-	if stderrFile, err = os.Create(input.Stderr(inputIdx)); err != nil {
+	stderrpath := path.Join(wd, VOLUMEDIR, input.Stderr(inputIdx))
+	logcabin.Info.Printf("creating stderr input log at %s\n", stderrpath)
+	if stderrFile, err = os.Create(stderrpath); err != nil {
 		return -1, err
 	}
 	defer stderrFile.Close()
@@ -611,25 +764,61 @@ func (d *Docker) CreateUploadContainer(job *model.Job) (string, error) {
 
 	config := &container.Config{}
 	hostConfig := &container.HostConfig{}
+	invID := job.InvocationID
+
+	image = d.cfg.GetString("porklock.image")
+	tag = d.cfg.GetString("porklock.tag")
+	vaultaddress := d.cfg.GetString("vault.url")
+	vaulttoken := d.cfg.GetString("vault.token")
 
 	if err = d.PorkPull(); err != nil {
 		return "", err
 	}
 
+	// There's no point in only having one of them set.
+	if vaultaddress != "" && vaulttoken != "" {
+		config.Env = append(config.Env, fmt.Sprintf("%s=%s", "VAULT_ADDR", vaultaddress))
+		config.Env = append(config.Env, fmt.Sprintf("%s=%s", "VAULT_TOKEN", vaulttoken))
+	}
+
+	// This should always be present, so it's okay to always add it.
+	config.Env = append(config.Env, fmt.Sprintf("%s=%s", "JOB_UUID", invID))
+
 	config.Image = fmt.Sprintf("%s:%s", image, tag)
 	hostConfig.LogConfig = container.LogConfig{Type: "none"}
+
+	config.WorkingDir = WORKDIR
 
 	if wd, err = os.Getwd(); err != nil {
 		return "", err
 	}
-	config.WorkingDir = WORKDIR
-	hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, WORKDIR, "rw"))
+
+	// Check to see if a working directory volume exists
+	hasVolume, err := d.VolumeExists(invID)
+	if err != nil {
+		return "", err
+	}
+
+	// if the working directory volume exists, use it.
+	if hasVolume {
+		hostConfig.Binds = append(
+			hostConfig.Binds,
+			fmt.Sprintf("%s:%s:%s", invID, WORKDIR, "rw"),
+		)
+	} else {
+		hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, WORKDIR, "rw"))
+	}
+
+	hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:%s:%s", wd, CONFIGDIR, "rw"))
 
 	config.Labels = make(map[string]string)
 	config.Labels[model.DockerLabelKey] = job.InvocationID
 	config.Labels[TypeLabel] = strconv.Itoa(OutputContainer)
 
 	config.Cmd = job.FinalOutputArguments()
+
+	logcabin.Info.Printf("hostconfig: %#v\n", hostConfig)
+	logcabin.Info.Printf("config: %#v\n", config)
 
 	name = fmt.Sprintf("output-%s", job.InvocationID)
 	if response, err = d.Client.ContainerCreate(d.ctx, config, hostConfig, nil, name); err == nil {
@@ -638,27 +827,38 @@ func (d *Docker) CreateUploadContainer(job *model.Job) (string, error) {
 			logcabin.Info.Printf("Warning creating %s: %s", response.ID, warning)
 		}
 	}
+	if err != nil {
+		logcabin.Error.Print(err)
+	}
 
-	return response.ID, nil
+	return response.ID, err
 }
 
 // UploadOutputs will upload files to iRODS from the local working directory.
 func (d *Docker) UploadOutputs(job *model.Job) (int64, error) {
 	var (
 		err                    error
-		containerID            string
+		wd, containerID        string
 		stdoutFile, stderrFile io.WriteCloser
 	)
 	if containerID, err = d.CreateUploadContainer(job); err != nil {
 		return -1, err
 	}
 
-	if stdoutFile, err = os.Create("logs/logs-stdout-output"); err != nil {
+	if wd, err = os.Getwd(); err != nil {
+		return -1, err
+	}
+
+	stdoutpath := path.Join(wd, VOLUMEDIR, "logs", "logs-stdout-output")
+	logcabin.Info.Printf("path to the output stdout file: %s\n", stdoutpath)
+	if stdoutFile, err = os.Create(stdoutpath); err != nil {
 		return -1, err
 	}
 	defer stdoutFile.Close()
 
-	if stderrFile, err = os.Create("logs/logs-stderr-output"); err != nil {
+	stderrpath := path.Join(wd, VOLUMEDIR, "logs", "logs-stderr-output")
+	logcabin.Info.Printf("path to the output stderr file: %s\n", stderrpath)
+	if stderrFile, err = os.Create(stderrpath); err != nil {
 		return -1, err
 	}
 	defer stderrFile.Close()
