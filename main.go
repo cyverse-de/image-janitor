@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path"
 	"regexp"
 	"strings"
@@ -28,9 +29,7 @@ import (
 	"github.com/cyverse-de/model"
 )
 
-var (
-	filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
-)
+var filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
 
 const pingKey = "events.image-janitor.ping"
 const pongKey = "events.image-janitor.pong"
@@ -416,6 +415,12 @@ func main() {
 		select {
 		case <-timer.C:
 			app.removeUnusedImages(client, *readFrom)
+			pruneCmd := exec.Command("docker", "network", "prune", "-f")
+			pruneCmd.Stdout = os.Stdout
+			pruneCmd.Stderr = os.Stderr
+			if err = pruneCmd.Run(); err != nil {
+				logcabin.Error.Printf("%+v", err)
+			}
 		}
 	}
 }
