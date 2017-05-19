@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"strings"
@@ -415,12 +414,6 @@ func main() {
 		select {
 		case <-timer.C:
 			app.removeUnusedImages(client, *readFrom)
-			pruneCmd := exec.Command("docker", "network", "prune", "-f")
-			pruneCmd.Stdout = os.Stdout
-			pruneCmd.Stderr = os.Stderr
-			if err = pruneCmd.Run(); err != nil {
-				logcabin.Error.Printf("%+v", err)
-			}
 		}
 	}
 }
