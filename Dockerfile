@@ -1,4 +1,6 @@
-FROM discoenv/golang-base:master
+FROM golang:1.8
+
+#RUN apk add --no-cache gcc linux-headers
 
 COPY . /go/src/github.com/cyverse-de/image-janitor
 RUN go install github.com/cyverse-de/image-janitor
