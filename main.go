@@ -15,17 +15,16 @@ import (
 
 	"github.com/cyverse-de/go-events/jobevents"
 	"github.com/cyverse-de/go-events/ping"
-	"github.com/cyverse-de/messaging"
 	"github.com/cyverse-de/version"
+	docker "github.com/fsouza/go-dockerclient"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
-
-	"golang.org/x/net/context"
+	"gopkg.in/cyverse-de/messaging.v2"
 
 	"github.com/cyverse-de/configurate"
-	"github.com/cyverse-de/dockerops"
 	"github.com/cyverse-de/logcabin"
-	"github.com/cyverse-de/model"
+	"gopkg.in/cyverse-de/model.v1"
 )
 
 var filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
@@ -40,6 +39,67 @@ type DockerClient interface {
 	Images() ([]string, error)
 	DanglingImages() ([]string, error)
 	SafelyRemoveImageByID(string) error
+}
+
+type dclient struct {
+	client *docker.Client
+}
+
+func (d *dclient) SafelyRemoveImage(name, tag string) error {
+	combinedName := fmt.Sprintf("%s:%s", name, tag)
+	err := d.client.RemoveImage(combinedName)
+	if err != nil {
+		err = errors.Wrapf(err, "error safely removing image %s", combinedName)
+	}
+	return err
+}
+
+func (d *dclient) Images() ([]string, error) {
+	images, err := d.client.ListImages(docker.ListImagesOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	var retval []string
+	for _, img := range images {
+		repos := img.RepoTags
+		for _, r := range repos {
+			retval = append(retval, r)
+		}
+	}
+	return retval, nil
+}
+
+func (d *dclient) DanglingImages() ([]string, error) {
+	var err error
+
+	imageFilter := map[string][]string{
+		"dangling": []string{"true"},
+	}
+
+	images, err := d.client.ListImages(docker.ListImagesOptions{
+		Filters: imageFilter,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var retval []string
+	for _, img := range images {
+		retval = append(retval, img.ID)
+	}
+
+	return retval, nil
+}
+
+func (d *dclient) SafelyRemoveImageByID(id string) error {
+	err := d.client.RemoveImageExtended(id, docker.RemoveImageOptions{
+		Force:   false,
+		NoPrune: true,
+	})
+	if err != nil {
+		return err
+	}
+	return err
 }
 
 // Messenger defines an interface for handling AMQP operations. This is the
@@ -403,11 +463,13 @@ func main() {
 	)
 
 	logcabin.Info.Printf("Connecting to Docker at %s", *dockerURI)
-	client, err := dockerops.NewDocker(context.Background(), cfg, *dockerURI)
+	dc, err := docker.NewClient(*dockerURI)
 	if err != nil {
 		logcabin.Error.Fatal(err)
 	}
 	logcabin.Info.Printf("Done connecting to Docker at %s", *dockerURI)
+
+	client := &dclient{dc}
 
 	timer := time.NewTicker(timerDuration)
 	for {
