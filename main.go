@@ -241,15 +241,10 @@ func (i *ImageJanitor) removeImage(client DockerClient, image string) error {
 // removeUnusedImages removes all of the images returned by removeImage() from
 // the connected Docker Engine.
 func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) {
-	logcabin.Info.Println("Removing unused Docker images")
-
 	listing, err := i.jobFiles(readFrom)
 	if err != nil {
 		logcabin.Error.Print(err)
 		return
-	}
-	for _, f := range listing {
-		logcabin.Info.Printf("Job file %s found in %s", f, readFrom)
 	}
 
 	jobList, err := i.jobs(listing)
@@ -257,22 +252,12 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 		logcabin.Error.Print(err)
 		return
 	}
-	for _, j := range jobList {
-		logcabin.Info.Printf("Job %s found in %s", j.InvocationID, readFrom)
-	}
 
 	imagesFromJobs := i.jobImages(jobList)
-	for _, i := range imagesFromJobs {
-		logcabin.Info.Printf("Image %s is referenced in a job", i)
-	}
-
 	imagesFromDocker, err := client.Images()
 	if err != nil {
 		logcabin.Error.Print(err)
 		return
-	}
-	for _, d := range imagesFromDocker {
-		logcabin.Info.Printf("Image %s was listed by Docker", d)
 	}
 
 	rmables := i.removableImages(imagesFromJobs, imagesFromDocker)
@@ -291,31 +276,23 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 
 	for _, removableImage := range rmables {
 		if _, ok := excludes[removableImage]; !ok {
-			logcabin.Info.Printf("Removing image %s...", removableImage)
 			if err = i.removeImage(client, removableImage); err != nil {
 				errmsg := fmt.Sprintf("error removing image %s: %s", removableImage, err)
 				logcabin.Error.Println(errmsg)
 				i.Emit("remove-image-error", errmsg)
 			} else {
-				logcabin.Info.Printf("Done removing image %s", removableImage)
 				i.Emit("remove-image", removableImage)
 			}
-		} else {
-			logcabin.Info.Printf("Skipping removal of %s", removableImage)
 		}
 	}
-	logcabin.Info.Println("Done removing unused Docker images")
 
 	danglingImages, err := client.DanglingImages()
 	if err != nil {
 		logcabin.Error.Println(err)
 	}
 	for _, di := range danglingImages {
-		logcabin.Info.Printf("Removing dangling image %s", di)
 		if err = client.SafelyRemoveImageByID(di); err != nil {
 			logcabin.Error.Println(err)
-		} else {
-			logcabin.Info.Printf("Done removing dangling image %s", di)
 		}
 	}
 }
