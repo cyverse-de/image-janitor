@@ -20,7 +20,7 @@ import (
 
 	"github.com/cyverse-de/configurate"
 	"github.com/cyverse-de/logcabin"
-	"gopkg.in/cyverse-de/model.v1"
+	"gopkg.in/cyverse-de/model.v4"
 )
 
 var filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
