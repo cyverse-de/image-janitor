@@ -1,17 +1,18 @@
-package stream
+package stream // import "github.com/docker/docker/container/stream"
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/libcontainerd"
+	"github.com/containerd/containerd/cio"
 	"github.com/docker/docker/pkg/broadcaster"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/pools"
+	"github.com/sirupsen/logrus"
 )
 
 // Config holds information about I/O streams managed together.
@@ -24,11 +25,12 @@ import (
 // copied and delivered to all StdoutPipe and StderrPipe consumers, using
 // a kind of "broadcaster".
 type Config struct {
-	sync.WaitGroup
+	wg        sync.WaitGroup
 	stdout    *broadcaster.Unbuffered
 	stderr    *broadcaster.Unbuffered
 	stdin     io.ReadCloser
 	stdinPipe io.WriteCloser
+	dio       *cio.DirectIO
 }
 
 // NewConfig creates a stream config and initializes
@@ -114,15 +116,16 @@ func (c *Config) CloseStreams() error {
 }
 
 // CopyToPipe connects streamconfig with a libcontainerd.IOPipe
-func (c *Config) CopyToPipe(iop libcontainerd.IOPipe) {
+func (c *Config) CopyToPipe(iop *cio.DirectIO) {
+	c.dio = iop
 	copyFunc := func(w io.Writer, r io.ReadCloser) {
-		c.Add(1)
+		c.wg.Add(1)
 		go func() {
 			if _, err := pools.Copy(w, r); err != nil {
-				logrus.Errorf("stream copy error: %+v", err)
+				logrus.Errorf("stream copy error: %v", err)
 			}
 			r.Close()
-			c.Done()
+			c.wg.Done()
 		}()
 	}
 
@@ -138,9 +141,29 @@ func (c *Config) CopyToPipe(iop libcontainerd.IOPipe) {
 			go func() {
 				pools.Copy(iop.Stdin, stdin)
 				if err := iop.Stdin.Close(); err != nil {
-					logrus.Warnf("failed to close stdin: %+v", err)
+					logrus.Warnf("failed to close stdin: %v", err)
 				}
 			}()
+		}
+	}
+}
+
+// Wait for the stream to close
+// Wait supports timeouts via the context to unblock and forcefully
+// close the io streams
+func (c *Config) Wait(ctx context.Context) {
+	done := make(chan struct{}, 1)
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if c.dio != nil {
+			c.dio.Cancel()
+			c.dio.Wait()
+			c.dio.Close()
 		}
 	}
 }

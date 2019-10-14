@@ -1,30 +1,30 @@
-package remotecontext
+package remotecontext // import "github.com/docker/docker/builder/remotecontext"
 
 import (
 	"bufio"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"runtime"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/containerd/continuity/driver"
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/builder"
-	"github.com/docker/docker/builder/dockerfile/parser"
 	"github.com/docker/docker/builder/dockerignore"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/fileutils"
-	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/urlutil"
+	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // ClientSessionRemote is identifier for client-session context transport
 const ClientSessionRemote = "client-session"
 
 // Detect returns a context and dockerfile from remote location or local
-// archive. progressReader is only used if remoteURL is actually a URL
-// (not empty, and not a Git endpoint).
+// archive.
 func Detect(config backend.BuildConfig) (remote builder.Source, dockerfile *parser.Result, err error) {
 	remoteURL := config.Options.RemoteContext
 	dockerfilePath := config.Options.Dockerfile
@@ -35,8 +35,9 @@ func Detect(config backend.BuildConfig) (remote builder.Source, dockerfile *pars
 	case remoteURL == ClientSessionRemote:
 		res, err := parser.Parse(config.Source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errdefs.InvalidParameter(err)
 		}
+
 		return nil, res, nil
 	case urlutil.IsGitURL(remoteURL):
 		remote, dockerfile, err = newGitRemote(remoteURL, dockerfilePath)
@@ -98,26 +99,23 @@ func newGitRemote(gitURL string, dockerfilePath string) (builder.Source, *parser
 }
 
 func newURLRemote(url string, dockerfilePath string, progressReader func(in io.ReadCloser) io.ReadCloser) (builder.Source, *parser.Result, error) {
-	var dockerfile io.ReadCloser
-	dockerfileFoundErr := errors.New("found-dockerfile")
-	c, err := MakeRemoteContext(url, map[string]func(io.ReadCloser) (io.ReadCloser, error){
-		mimeTypes.TextPlain: func(rc io.ReadCloser) (io.ReadCloser, error) {
-			dockerfile = rc
-			return nil, dockerfileFoundErr
-		},
-		// fallback handler (tar context)
-		"": func(rc io.ReadCloser) (io.ReadCloser, error) {
-			return progressReader(rc), nil
-		},
-	})
-	switch {
-	case err == dockerfileFoundErr:
-		res, err := parser.Parse(dockerfile)
-		return nil, res, err
-	case err != nil:
+	contentType, content, err := downloadRemote(url)
+	if err != nil {
 		return nil, nil, err
 	}
-	return withDockerfileFromContext(c.(modifiableContext), dockerfilePath)
+	defer content.Close()
+
+	switch contentType {
+	case mimeTypes.TextPlain:
+		res, err := parser.Parse(progressReader(content))
+		return nil, res, errdefs.InvalidParameter(err)
+	default:
+		source, err := FromArchive(progressReader(content))
+		if err != nil {
+			return nil, nil, err
+		}
+		return withDockerfileFromContext(source.(modifiableContext), dockerfilePath)
+	}
 }
 
 func removeDockerfile(c modifiableContext, filesToRemove ...string) error {
@@ -150,19 +148,25 @@ func readAndParseDockerfile(name string, rc io.Reader) (*parser.Result, error) {
 	br := bufio.NewReader(rc)
 	if _, err := br.Peek(1); err != nil {
 		if err == io.EOF {
-			return nil, errors.Errorf("the Dockerfile (%s) cannot be empty", name)
+			return nil, errdefs.InvalidParameter(errors.Errorf("the Dockerfile (%s) cannot be empty", name))
 		}
 		return nil, errors.Wrap(err, "unexpected error reading Dockerfile")
 	}
-	return parser.Parse(br)
+
+	dockerfile, err := parser.Parse(br)
+	if err != nil {
+		return nil, errdefs.InvalidParameter(errors.Wrapf(err, "failed to parse %s", name))
+	}
+
+	return dockerfile, nil
 }
 
-func openAt(remote builder.Source, path string) (*os.File, error) {
+func openAt(remote builder.Source, path string) (driver.File, error) {
 	fullPath, err := FullPath(remote, path)
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(fullPath)
+	return remote.Root().Open(fullPath)
 }
 
 // StatAt is a helper for calling Stat on a path from a source
@@ -171,13 +175,16 @@ func StatAt(remote builder.Source, path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Stat(fullPath)
+	return remote.Root().Stat(fullPath)
 }
 
 // FullPath is a helper for getting a full path for a path from a source
 func FullPath(remote builder.Source, path string) (string, error) {
-	fullPath, err := symlink.FollowSymlinkInScope(filepath.Join(remote.Root(), path), remote.Root())
+	fullPath, err := remote.Root().ResolveScopedPath(path, true)
 	if err != nil {
+		if runtime.GOOS == "windows" {
+			return "", fmt.Errorf("failed to resolve scoped path %s (%s): %s. Possible cause is a forbidden path outside the build context", path, fullPath, err)
+		}
 		return "", fmt.Errorf("Forbidden path outside the build context: %s (%s)", path, fullPath) // backwards compat with old error
 	}
 	return fullPath, nil

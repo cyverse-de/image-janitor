@@ -1,4 +1,6 @@
-package signal
+// +build !mips,!mipsle,!mips64,!mips64le
+
+package signal // import "github.com/docker/docker/pkg/signal"
 
 import (
 	"syscall"
@@ -40,7 +42,6 @@ var SignalMap = map[string]syscall.Signal{
 	"TSTP":     unix.SIGTSTP,
 	"TTIN":     unix.SIGTTIN,
 	"TTOU":     unix.SIGTTOU,
-	"UNUSED":   unix.SIGUNUSED,
 	"URG":      unix.SIGURG,
 	"USR1":     unix.SIGUSR1,
 	"USR2":     unix.SIGUSR2,

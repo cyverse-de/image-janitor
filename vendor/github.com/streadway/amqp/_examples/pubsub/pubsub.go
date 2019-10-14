@@ -87,14 +87,14 @@ func redial(ctx context.Context, url string) chan chan session {
 // publish publishes messages to a reconnecting session to a fanout exchange.
 // It receives from the application specific source of messages.
 func publish(sessions chan chan session, messages <-chan message) {
-	var (
-		running bool
-		reading = messages
-		pending = make(chan message, 1)
-		confirm = make(chan amqp.Confirmation, 1)
-	)
-
 	for session := range sessions {
+		var (
+			running bool
+			reading = messages
+			pending = make(chan message, 1)
+			confirm = make(chan amqp.Confirmation, 1)
+		)
+
 		pub := <-session
 
 		// publisher confirms for this channel/connection
@@ -107,10 +107,14 @@ func publish(sessions chan chan session, messages <-chan message) {
 
 		log.Printf("publishing...")
 
+	Publish:
 		for {
 			var body message
 			select {
-			case confirmed := <-confirm:
+			case confirmed, ok := <-confirm:
+				if !ok {
+					break Publish
+				}
 				if !confirmed.Ack {
 					log.Printf("nack message %d, body: %q", confirmed.DeliveryTag, string(body))
 				}
@@ -125,7 +129,7 @@ func publish(sessions chan chan session, messages <-chan message) {
 				if err != nil {
 					pending <- body
 					pub.Close()
-					break
+					break Publish
 				}
 
 			case body, running = <-reading:

@@ -1,15 +1,15 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"fmt"
 	"io/ioutil"
 	"os"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/libnetwork"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 func (daemon *Daemon) setupLinkedContainers(container *container.Container) ([]string, error) {
@@ -44,12 +44,21 @@ func (daemon *Daemon) setupConfigDir(c *container.Container) (setupErr error) {
 	for _, configRef := range c.ConfigReferences {
 		// TODO (ehazlett): use type switch when more are supported
 		if configRef.File == nil {
-			logrus.Error("config target type is not a file target")
+			// Runtime configs are not mounted into the container, but they're
+			// a valid type of config so we should not error when we encounter
+			// one.
+			if configRef.Runtime == nil {
+				logrus.Error("config target type is not a file or runtime target")
+			}
+			// However, in any case, this isn't a file config, so we have no
+			// further work to do
 			continue
 		}
 
-		fPath := c.ConfigFilePath(*configRef)
-
+		fPath, err := c.ConfigFilePath(*configRef)
+		if err != nil {
+			return errors.Wrap(err, "error getting config file path for container")
+		}
 		log := logrus.WithFields(logrus.Fields{"name": configRef.File.Name, "path": fPath})
 
 		log.Debug("injecting config")
@@ -63,12 +72,6 @@ func (daemon *Daemon) setupConfigDir(c *container.Container) (setupErr error) {
 	}
 
 	return nil
-}
-
-// getSize returns real size & virtual size
-func (daemon *Daemon) getSize(containerID string) (int64, int64) {
-	// TODO Windows
-	return 0, 0
 }
 
 func (daemon *Daemon) setupIpcDirs(container *container.Container) error {
@@ -85,16 +88,15 @@ func (daemon *Daemon) mountVolumes(container *container.Container) error {
 	return nil
 }
 
-func detachMounted(path string) error {
-	return nil
-}
-
 func (daemon *Daemon) setupSecretDir(c *container.Container) (setupErr error) {
 	if len(c.SecretReferences) == 0 {
 		return nil
 	}
 
-	localMountPath := c.SecretMountPath()
+	localMountPath, err := c.SecretMountPath()
+	if err != nil {
+		return err
+	}
 	logrus.Debugf("secrets: setting up secret dir: %s", localMountPath)
 
 	// create local secret root
@@ -123,7 +125,10 @@ func (daemon *Daemon) setupSecretDir(c *container.Container) (setupErr error) {
 
 		// secrets are created in the SecretMountPath on the host, at a
 		// single level
-		fPath := c.SecretFilePath(*s)
+		fPath, err := c.SecretFilePath(*s)
+		if err != nil {
+			return err
+		}
 		logrus.WithFields(logrus.Fields{
 			"name": s.File.Name,
 			"path": fPath,
@@ -152,11 +157,12 @@ func enableIPOnPredefinedNetwork() bool {
 	return true
 }
 
-func (daemon *Daemon) isNetworkHotPluggable() bool {
-	return false
+// serviceDiscoveryOnDefaultNetwork indicates if service discovery is supported on the default network
+func serviceDiscoveryOnDefaultNetwork() bool {
+	return true
 }
 
-func setupPathsAndSandboxOptions(container *container.Container, sboxOptions *[]libnetwork.SandboxOption) error {
+func (daemon *Daemon) setupPathsAndSandboxOptions(container *container.Container, sboxOptions *[]libnetwork.SandboxOption) error {
 	return nil
 }
 
@@ -175,7 +181,7 @@ func (daemon *Daemon) initializeNetworkingPaths(container *container.Container, 
 				continue
 			}
 
-			ep, err := nc.GetEndpointInNetwork(sn)
+			ep, err := getEndpointInNetwork(nc.Name, sn)
 			if err != nil {
 				continue
 			}

@@ -1,10 +1,10 @@
-package layer
+package layer // import "github.com/docker/docker/layer"
 
 import (
 	"io"
 	"testing"
 
-	"github.com/opencontainers/go-digest"
+	digest "github.com/opencontainers/go-digest"
 )
 
 func TestEmptyLayer(t *testing.T) {
@@ -26,6 +26,12 @@ func TestEmptyLayer(t *testing.T) {
 
 	if diffSize, err := EmptyLayer.DiffSize(); err != nil || diffSize != 0 {
 		t.Fatal("expected zero diffsize for empty layer")
+	}
+
+	meta, err := EmptyLayer.Metadata()
+
+	if len(meta) != 0 || err != nil {
+		t.Fatal("expected zero length metadata for empty layer")
 	}
 
 	tarStream, err := EmptyLayer.TarStream()

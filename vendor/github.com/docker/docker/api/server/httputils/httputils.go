@@ -1,18 +1,23 @@
-package httputils
+package httputils // import "github.com/docker/docker/api/server/httputils"
 
 import (
-	"fmt"
+	"context"
 	"io"
 	"mime"
 	"net/http"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/versions"
+	"github.com/docker/docker/errdefs"
+	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/status"
 )
 
 // APIVersionKey is the client's requested API version.
-const APIVersionKey = "api-version"
+type APIVersionKey struct{}
 
 // APIFunc is an adapter to allow the use of ordinary functions as Docker API endpoints.
 // Any function that has the appropriate signature can be registered as an API endpoint (e.g. getVersion).
@@ -26,7 +31,7 @@ func HijackConnection(w http.ResponseWriter) (io.ReadCloser, io.Writer, error) {
 		return nil, nil, err
 	}
 	// Flush the options to make sure the client sets the raw mode
-	conn.Write([]byte{})
+	_, _ = conn.Write([]byte{})
 	return conn, conn, nil
 }
 
@@ -36,9 +41,9 @@ func CloseStreams(streams ...interface{}) {
 		if tcpc, ok := stream.(interface {
 			CloseWrite() error
 		}); ok {
-			tcpc.CloseWrite()
+			_ = tcpc.CloseWrite()
 		} else if closer, ok := stream.(io.Closer); ok {
-			closer.Close()
+			_ = closer.Close()
 		}
 	}
 }
@@ -58,7 +63,7 @@ func CheckForJSON(r *http.Request) error {
 	if matchesContentType(ct, "application/json") {
 		return nil
 	}
-	return fmt.Errorf("Content-Type specified (%s) must be 'application/json'", ct)
+	return errdefs.InvalidParameter(errors.Errorf("Content-Type specified (%s) must be 'application/json'", ct))
 }
 
 // ParseForm ensures the request form is parsed even with invalid content types.
@@ -68,7 +73,7 @@ func ParseForm(r *http.Request) error {
 		return nil
 	}
 	if err := r.ParseForm(); err != nil && !strings.HasPrefix(err.Error(), "mime:") {
-		return err
+		return errdefs.InvalidParameter(err)
 	}
 	return nil
 }
@@ -80,11 +85,33 @@ func VersionFromContext(ctx context.Context) string {
 		return ""
 	}
 
-	if val := ctx.Value(APIVersionKey); val != nil {
+	if val := ctx.Value(APIVersionKey{}); val != nil {
 		return val.(string)
 	}
 
 	return ""
+}
+
+// MakeErrorHandler makes an HTTP handler that decodes a Docker error and
+// returns it in the response.
+func MakeErrorHandler(err error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		statusCode := errdefs.GetHTTPErrorStatusCode(err)
+		vars := mux.Vars(r)
+		if apiVersionSupportsJSONErrors(vars["version"]) {
+			response := &types.ErrorResponse{
+				Message: err.Error(),
+			}
+			_ = WriteJSON(w, statusCode, response)
+		} else {
+			http.Error(w, status.Convert(err).Message(), statusCode)
+		}
+	}
+}
+
+func apiVersionSupportsJSONErrors(version string) bool {
+	const firstAPIVersionWithJSONErrors = "1.23"
+	return version == "" || versions.GreaterThan(version, firstAPIVersionWithJSONErrors)
 }
 
 // matchesContentType validates the content type against the expected one

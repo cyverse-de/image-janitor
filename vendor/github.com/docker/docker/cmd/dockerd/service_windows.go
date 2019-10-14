@@ -12,8 +12,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/system"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -52,7 +52,7 @@ func installServiceFlags(flags *pflag.FlagSet) {
 	flRegisterService = flags.Bool("register-service", false, "Register the service and exit")
 	flUnregisterService = flags.Bool("unregister-service", false, "Unregister the service and exit")
 	flRunService = flags.Bool("run-service", false, "")
-	flags.MarkHidden("run-service")
+	_ = flags.MarkHidden("run-service")
 }
 
 type handler struct {
@@ -396,8 +396,8 @@ func initPanicFile(path string) error {
 	// Update STD_ERROR_HANDLE to point to the panic file so that Go writes to
 	// it when it panics. Remember the old stderr to restore it before removing
 	// the panic file.
-	sh := windows.STD_ERROR_HANDLE
-	h, err := windows.GetStdHandle(uint32(sh))
+	sh := uint32(windows.STD_ERROR_HANDLE)
+	h, err := windows.GetStdHandle(sh)
 	if err != nil {
 		return err
 	}
@@ -421,7 +421,7 @@ func initPanicFile(path string) error {
 func removePanicFile() {
 	if st, err := panicFile.Stat(); err == nil {
 		if st.Size() == 0 {
-			sh := windows.STD_ERROR_HANDLE
+			sh := uint32(windows.STD_ERROR_HANDLE)
 			setStdHandle.Call(uintptr(sh), uintptr(oldStderr))
 			panicFile.Close()
 			os.Remove(panicFile.Name())

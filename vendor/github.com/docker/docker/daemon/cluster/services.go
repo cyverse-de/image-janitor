@@ -1,6 +1,7 @@
-package cluster
+package cluster // import "github.com/docker/docker/daemon/cluster"
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,19 +11,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
-	apierrors "github.com/docker/docker/api/errors"
 	apitypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
 	types "github.com/docker/docker/api/types/swarm"
 	timetypes "github.com/docker/docker/api/types/time"
 	"github.com/docker/docker/daemon/cluster/convert"
+	"github.com/docker/docker/errdefs"
 	runconfigopts "github.com/docker/docker/runconfig/opts"
 	swarmapi "github.com/docker/swarmkit/api"
 	gogotypes "github.com/gogo/protobuf/types"
 	"github.com/pkg/errors"
-	"golang.org/x/net/context"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 )
 
 // GetServices returns all services of a managed swarm cluster.
@@ -67,7 +68,9 @@ func (c *Cluster) GetServices(options apitypes.ServiceListOptions) ([]types.Serv
 
 	r, err := state.controlClient.ListServices(
 		ctx,
-		&swarmapi.ListServicesRequest{Filters: filters})
+		&swarmapi.ListServicesRequest{Filters: filters},
+		grpc.MaxCallRecvMsgSize(defaultRecvSizeForListResponse),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +78,7 @@ func (c *Cluster) GetServices(options apitypes.ServiceListOptions) ([]types.Serv
 	services := make([]types.Service, 0, len(r.Services))
 
 	for _, service := range r.Services {
-		if options.Filters.Include("mode") {
+		if options.Filters.Contains("mode") {
 			var mode string
 			switch service.Spec.GetMode().(type) {
 			case *swarmapi.ServiceSpec_Global:
@@ -129,19 +132,27 @@ func (c *Cluster) CreateService(s types.ServiceSpec, encodedAuth string, queryRe
 
 		serviceSpec, err := convert.ServiceSpecToGRPC(s)
 		if err != nil {
-			return apierrors.NewBadRequestError(err)
+			return errdefs.InvalidParameter(err)
 		}
 
 		resp = &apitypes.ServiceCreateResponse{}
 
 		switch serviceSpec.Task.Runtime.(type) {
+		case *swarmapi.TaskSpec_Attachment:
+			return fmt.Errorf("invalid task spec: spec type %q not supported", types.RuntimeNetworkAttachment)
 		// handle other runtimes here
 		case *swarmapi.TaskSpec_Generic:
 			switch serviceSpec.Task.GetGeneric().Kind {
 			case string(types.RuntimePlugin):
+				if !c.config.Backend.HasExperimental() {
+					return fmt.Errorf("runtime type %q only supported in experimental", types.RuntimePlugin)
+				}
 				if s.TaskTemplate.PluginSpec == nil {
 					return errors.New("plugin spec must be set")
 				}
+
+			default:
+				return fmt.Errorf("unsupported runtime type: %q", serviceSpec.Task.GetGeneric().Kind)
 			}
 
 			r, err := state.controlClient.CreateService(ctx, &swarmapi.CreateServiceRequest{Spec: &serviceSpec})
@@ -226,7 +237,7 @@ func (c *Cluster) UpdateService(serviceIDOrName string, version uint64, spec typ
 
 		serviceSpec, err := convert.ServiceSpecToGRPC(spec)
 		if err != nil {
-			return apierrors.NewBadRequestError(err)
+			return errdefs.InvalidParameter(err)
 		}
 
 		currentService, err := getService(ctx, state.controlClient, serviceIDOrName, false)
@@ -237,6 +248,8 @@ func (c *Cluster) UpdateService(serviceIDOrName string, version uint64, spec typ
 		resp = &apitypes.ServiceUpdateResponse{}
 
 		switch serviceSpec.Task.Runtime.(type) {
+		case *swarmapi.TaskSpec_Attachment:
+			return fmt.Errorf("invalid task spec: spec type %q not supported", types.RuntimeNetworkAttachment)
 		case *swarmapi.TaskSpec_Generic:
 			switch serviceSpec.Task.GetGeneric().Kind {
 			case string(types.RuntimePlugin):
@@ -458,22 +471,33 @@ func (c *Cluster) ServiceLogs(ctx context.Context, selector *backend.LogSelector
 			for _, msg := range subscribeMsg.Messages {
 				// make a new message
 				m := new(backend.LogMessage)
-				m.Attrs = make(backend.LogAttributes)
+				m.Attrs = make([]backend.LogAttr, 0, len(msg.Attrs)+3)
 				// add the timestamp, adding the error if it fails
 				m.Timestamp, err = gogotypes.TimestampFromProto(msg.Timestamp)
 				if err != nil {
 					m.Err = err
 				}
+
+				nodeKey := contextPrefix + ".node.id"
+				serviceKey := contextPrefix + ".service.id"
+				taskKey := contextPrefix + ".task.id"
+
 				// copy over all of the details
 				for _, d := range msg.Attrs {
-					m.Attrs[d.Key] = d.Value
+					switch d.Key {
+					case nodeKey, serviceKey, taskKey:
+						// we have the final say over context details (in case there
+						// is a conflict (if the user added a detail with a context's
+						// key for some reason))
+					default:
+						m.Attrs = append(m.Attrs, backend.LogAttr{Key: d.Key, Value: d.Value})
+					}
 				}
-				// we have the final say over context details (in case there
-				// is a conflict (if the user added a detail with a context's
-				// key for some reason))
-				m.Attrs[contextPrefix+".node.id"] = msg.Context.NodeID
-				m.Attrs[contextPrefix+".service.id"] = msg.Context.ServiceID
-				m.Attrs[contextPrefix+".task.id"] = msg.Context.TaskID
+				m.Attrs = append(m.Attrs,
+					backend.LogAttr{Key: nodeKey, Value: msg.Context.NodeID},
+					backend.LogAttr{Key: serviceKey, Value: msg.Context.ServiceID},
+					backend.LogAttr{Key: taskKey, Value: msg.Context.TaskID},
+				)
 
 				switch msg.Stream {
 				case swarmapi.LogStreamStdout:
@@ -552,7 +576,7 @@ func (c *Cluster) imageWithDigestString(ctx context.Context, image string, authC
 			return "", errors.Errorf("image reference not tagged: %s", image)
 		}
 
-		repo, _, err := c.config.Backend.GetRepository(ctx, taggedRef, authConfig)
+		repo, _, err := c.config.ImageBackend.GetRepository(ctx, taggedRef, authConfig)
 		if err != nil {
 			return "", err
 		}

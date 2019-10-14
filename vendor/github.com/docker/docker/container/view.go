@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/container"
 
 import (
 	"errors"
@@ -6,17 +6,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
-	"github.com/hashicorp/go-memdb"
+	memdb "github.com/hashicorp/go-memdb"
+	"github.com/sirupsen/logrus"
 )
 
 const (
-	memdbContainersTable = "containers"
-	memdbNamesTable      = "names"
-
+	memdbContainersTable  = "containers"
+	memdbNamesTable       = "names"
 	memdbIDIndex          = "id"
 	memdbContainerIDIndex = "containerid"
 )
@@ -168,9 +167,9 @@ func (db *memDB) Delete(c *Container) error {
 			txn.Delete(memdbNamesTable, nameAssociation{name: name})
 		}
 
-		if err := txn.Delete(memdbContainersTable, NewBaseContainer(c.ID, c.Root)); err != nil {
-			return err
-		}
+		// Ignore error - the container may not actually exist in the
+		// db, but we still need to clean up associated names.
+		txn.Delete(memdbContainersTable, NewBaseContainer(c.ID, c.Root))
 		return nil
 	})
 }
@@ -191,11 +190,7 @@ func (db *memDB) ReserveName(name, containerID string) error {
 			}
 			return nil
 		}
-
-		if err := txn.Insert(memdbNamesTable, nameAssociation{name: name, containerID: containerID}); err != nil {
-			return err
-		}
-		return nil
+		return txn.Insert(memdbNamesTable, nameAssociation{name: name, containerID: containerID})
 	})
 }
 
@@ -203,10 +198,7 @@ func (db *memDB) ReserveName(name, containerID string) error {
 // Once released, a name can be reserved again
 func (db *memDB) ReleaseName(name string) error {
 	return db.withTxn(func(txn *memdb.Txn) error {
-		if err := txn.Delete(memdbNamesTable, nameAssociation{name: name}); err != nil {
-			return err
-		}
-		return nil
+		return txn.Delete(memdbNamesTable, nameAssociation{name: name})
 	})
 }
 
@@ -298,6 +290,10 @@ func (v *memdbView) GetAllNames() map[string][]string {
 // transform maps a (deep) copied Container object to what queries need.
 // A lock on the Container is not held because these are immutable deep copies.
 func (v *memdbView) transform(container *Container) *Snapshot {
+	health := types.NoHealthcheck
+	if container.Health != nil {
+		health = container.Health.Status()
+	}
 	snapshot := &Snapshot{
 		Container: types.Container{
 			ID:      container.ID,
@@ -316,7 +312,7 @@ func (v *memdbView) transform(container *Container) *Snapshot {
 		Managed:      container.Managed,
 		ExposedPorts: make(nat.PortSet),
 		PortBindings: make(nat.PortSet),
-		Health:       container.HealthString(),
+		Health:       health,
 		Running:      container.Running,
 		Paused:       container.Paused,
 		ExitCode:     container.ExitCode(),
@@ -344,7 +340,7 @@ func (v *memdbView) transform(container *Container) *Snapshot {
 	}
 
 	if len(container.Args) > 0 {
-		args := []string{}
+		var args []string
 		for _, arg := range container.Args {
 			if strings.Contains(arg, " ") {
 				args = append(args, fmt.Sprintf("'%s'", arg))
@@ -477,7 +473,7 @@ type namesByContainerIDIndexer struct{}
 func (e *namesByContainerIDIndexer) FromObject(obj interface{}) (bool, []byte, error) {
 	n, ok := obj.(nameAssociation)
 	if !ok {
-		return false, nil, fmt.Errorf(`%T does not have type "nameAssocation"`, obj)
+		return false, nil, fmt.Errorf(`%T does not have type "nameAssociation"`, obj)
 	}
 
 	// Add the null character as a terminator

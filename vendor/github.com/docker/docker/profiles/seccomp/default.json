@@ -57,7 +57,6 @@
 				"access",
 				"adjtimex",
 				"alarm",
-				"alarm",
 				"bind",
 				"brk",
 				"capget",
@@ -163,10 +162,14 @@
 				"ioctl",
 				"io_destroy",
 				"io_getevents",
+				"io_pgetevents",
 				"ioprio_get",
 				"ioprio_set",
 				"io_setup",
 				"io_submit",
+				"io_uring_enter",
+				"io_uring_register",
+				"io_uring_setup",
 				"ipc",
 				"kill",
 				"lchown",
@@ -314,6 +317,7 @@
 				"sigaltstack",
 				"signalfd",
 				"signalfd4",
+				"sigprocmask",
 				"sigreturn",
 				"socket",
 				"socketcall",
@@ -323,13 +327,13 @@
 				"stat64",
 				"statfs",
 				"statfs64",
+				"statx",
 				"symlink",
 				"symlinkat",
 				"sync",
 				"sync_file_range",
 				"syncfs",
 				"sysinfo",
-				"syslog",
 				"tee",
 				"tgkill",
 				"time",
@@ -365,6 +369,18 @@
 			"args": [],
 			"comment": "",
 			"includes": {},
+			"excludes": {}
+		},
+		{
+			"names": [
+				"ptrace"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": null,
+			"comment": "",
+			"includes": {
+				"minKernel": "4.8"
+			},
 			"excludes": {}
 		},
 		{
@@ -557,9 +573,11 @@
 				"mount",
 				"name_to_handle_at",
 				"perf_event_open",
+				"quotactl",
 				"setdomainname",
 				"sethostname",
 				"setns",
+				"syslog",
 				"umount",
 				"umount2",
 				"unshare"
@@ -582,7 +600,7 @@
 			"args": [
 				{
 					"index": 0,
-					"value": 2080505856,
+					"value": 2114060288,
 					"valueTwo": 0,
 					"op": "SCMP_CMP_MASKED_EQ"
 				}
@@ -607,7 +625,7 @@
 			"args": [
 				{
 					"index": 1,
-					"value": 2080505856,
+					"value": 2114060288,
 					"valueTwo": 0,
 					"op": "SCMP_CMP_MASKED_EQ"
 				}
@@ -742,6 +760,36 @@
 			"includes": {
 				"caps": [
 					"CAP_SYS_TTY_CONFIG"
+				]
+			},
+			"excludes": {}
+		},
+		{
+			"names": [
+				"get_mempolicy",
+				"mbind",
+				"set_mempolicy"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [],
+			"comment": "",
+			"includes": {
+				"caps": [
+					"CAP_SYS_NICE"
+				]
+			},
+			"excludes": {}
+		},
+		{
+			"names": [
+				"syslog"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [],
+			"comment": "",
+			"includes": {
+				"caps": [
+					"CAP_SYSLOG"
 				]
 			},
 			"excludes": {}

@@ -1,15 +1,17 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/errdefs"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestConfigRemoveUnsupported(t *testing.T) {
@@ -18,7 +20,7 @@ func TestConfigRemoveUnsupported(t *testing.T) {
 		client:  &http.Client{},
 	}
 	err := client.ConfigRemove(context.Background(), "config_id")
-	assert.EqualError(t, err, `"config remove" requires API version 1.30, but the Docker daemon API version is 1.29`)
+	assert.Check(t, is.Error(err, `"config remove" requires API version 1.30, but the Docker daemon API version is 1.29`))
 }
 
 func TestConfigRemoveError(t *testing.T) {
@@ -30,6 +32,9 @@ func TestConfigRemoveError(t *testing.T) {
 	err := client.ConfigRemove(context.Background(), "config_id")
 	if err == nil || err.Error() != "Error response from daemon: Server error" {
 		t.Fatalf("expected a Server Error, got %v", err)
+	}
+	if !errdefs.IsSystem(err) {
+		t.Fatalf("expected a Server Error, got %T", err)
 	}
 }
 

@@ -1,4 +1,4 @@
-package logger
+package logger // import "github.com/docker/docker/daemon/logger"
 
 import (
 	"fmt"
@@ -37,6 +37,22 @@ func (info *Info) ExtraAttributes(keyMod func(string) string) (map[string]string
 					l = keyMod(l)
 				}
 				extra[l] = v
+			}
+		}
+	}
+
+	labelsRegex, ok := info.Config["labels-regex"]
+	if ok && len(labels) > 0 {
+		re, err := regexp.Compile(labelsRegex)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range info.ContainerLabels {
+			if re.MatchString(k) {
+				if keyMod != nil {
+					k = keyMod(k)
+				}
+				extra[k] = v
 			}
 		}
 	}

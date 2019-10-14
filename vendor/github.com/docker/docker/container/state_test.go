@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/container"
 
 import (
 	"context"
@@ -109,7 +109,9 @@ func TestStateRunStop(t *testing.T) {
 	}
 
 	// Set the state to dead and removed.
-	s.SetDead()
+	s.Lock()
+	s.Dead = true
+	s.Unlock()
 	s.SetRemoved()
 
 	// Wait for removed status or timeout.
@@ -163,6 +165,30 @@ func TestStateTimeoutWait(t *testing.T) {
 		t.Log("Stop callback fired")
 		if status.ExitCode() != 0 {
 			t.Fatalf("expected exit code %v, got %v, err %q", 0, status.ExitCode(), status.Err())
+		}
+	}
+}
+
+func TestIsValidStateString(t *testing.T) {
+	states := []struct {
+		state    string
+		expected bool
+	}{
+		{"paused", true},
+		{"restarting", true},
+		{"running", true},
+		{"dead", true},
+		{"start", false},
+		{"created", true},
+		{"exited", true},
+		{"removing", true},
+		{"stop", false},
+	}
+
+	for _, s := range states {
+		v := IsValidStateString(s.state)
+		if v != s.expected {
+			t.Fatalf("Expected %t, but got %t", s.expected, v)
 		}
 	}
 }

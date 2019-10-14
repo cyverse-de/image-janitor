@@ -1,18 +1,21 @@
-package swarm
+package swarm // import "github.com/docker/docker/api/server/router/swarm"
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/docker/docker/api/server/httputils"
 	basictypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/api/types/versions"
 )
 
 // swarmLogs takes an http response, request, and selector, and writes the logs
 // specified by the selector to the response
-func (sr *swarmRouter) swarmLogs(ctx context.Context, w http.ResponseWriter, r *http.Request, selector *backend.LogSelector) error {
+func (sr *swarmRouter) swarmLogs(ctx context.Context, w io.Writer, r *http.Request, selector *backend.LogSelector) error {
 	// Args are validated before the stream starts because when it starts we're
 	// sending HTTP 200 by writing an empty chunk of data to tell the client that
 	// daemon is going to stream. By sending this initial HTTP 200 we can't report
@@ -62,4 +65,41 @@ func (sr *swarmRouter) swarmLogs(ctx context.Context, w http.ResponseWriter, r *
 
 	httputils.WriteLogStream(ctx, w, msgs, logsConfig, !tty)
 	return nil
+}
+
+// adjustForAPIVersion takes a version and service spec and removes fields to
+// make the spec compatible with the specified version.
+func adjustForAPIVersion(cliVersion string, service *swarm.ServiceSpec) {
+	if cliVersion == "" {
+		return
+	}
+	if versions.LessThan(cliVersion, "1.40") {
+		if service.TaskTemplate.ContainerSpec != nil {
+			// Sysctls for docker swarm services weren't supported before
+			// API version 1.40
+			service.TaskTemplate.ContainerSpec.Sysctls = nil
+
+			if service.TaskTemplate.ContainerSpec.Privileges != nil && service.TaskTemplate.ContainerSpec.Privileges.CredentialSpec != nil {
+				// Support for setting credential-spec through configs was added in API 1.40
+				service.TaskTemplate.ContainerSpec.Privileges.CredentialSpec.Config = ""
+			}
+			for _, config := range service.TaskTemplate.ContainerSpec.Configs {
+				// support for the Runtime target was added in API 1.40
+				config.Runtime = nil
+			}
+		}
+
+		if service.TaskTemplate.Placement != nil {
+			// MaxReplicas for docker swarm services weren't supported before
+			// API version 1.40
+			service.TaskTemplate.Placement.MaxReplicas = 0
+		}
+	}
+	if versions.LessThan(cliVersion, "1.41") {
+		if service.TaskTemplate.ContainerSpec != nil {
+			// Capabilities for docker swarm services weren't supported before
+			// API version 1.41
+			service.TaskTemplate.ContainerSpec.Capabilities = nil
+		}
+	}
 }

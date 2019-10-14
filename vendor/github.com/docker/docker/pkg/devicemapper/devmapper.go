@@ -1,6 +1,6 @@
 // +build linux,cgo
 
-package devicemapper
+package devicemapper // import "github.com/docker/docker/pkg/devicemapper"
 
 import (
 	"errors"
@@ -9,10 +9,12 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
+// Same as DM_DEVICE_* enum values from libdevmapper.h
+// nolint: deadcode,unused,varcheck
 const (
 	deviceCreate TaskType = iota
 	deviceReload
@@ -46,7 +48,6 @@ var (
 	ErrTaskSetName          = errors.New("dm_task_set_name failed")
 	ErrTaskSetMessage       = errors.New("dm_task_set_message failed")
 	ErrTaskSetAddNode       = errors.New("dm_task_set_add_node failed")
-	ErrTaskSetRo            = errors.New("dm_task_set_ro failed")
 	ErrTaskAddTarget        = errors.New("dm_task_add_target failed")
 	ErrTaskSetSector        = errors.New("dm_task_set_sector failed")
 	ErrTaskGetDeps          = errors.New("dm_task_get_deps failed")
@@ -59,8 +60,6 @@ var (
 	ErrUdevWait             = errors.New("wait on udev cookie failed")
 	ErrSetDevDir            = errors.New("dm_set_dev_dir failed")
 	ErrGetLibraryVersion    = errors.New("dm_get_library_version failed")
-	ErrCreateRemoveTask     = errors.New("Can't create task of type deviceRemove")
-	ErrRunRemoveDevice      = errors.New("running RemoveDevice failed")
 	ErrInvalidAddNode       = errors.New("Invalid AddNode type")
 	ErrBusy                 = errors.New("Device is Busy")
 	ErrDeviceIDExists       = errors.New("Device Id Exists")
@@ -68,9 +67,10 @@ var (
 )
 
 var (
-	dmSawBusy  bool
-	dmSawExist bool
-	dmSawEnxio bool // No Such Device or Address
+	dmSawBusy    bool
+	dmSawExist   bool
+	dmSawEnxio   bool // No Such Device or Address
+	dmSawEnoData bool // No data available
 )
 
 type (
@@ -191,13 +191,6 @@ func (t *Task) setAddNode(addNode AddNodeType) error {
 	}
 	if res := DmTaskSetAddNode(t.unmanaged, addNode); res != 1 {
 		return ErrTaskSetAddNode
-	}
-	return nil
-}
-
-func (t *Task) setRo() error {
-	if res := DmTaskSetRo(t.unmanaged); res != 1 {
-		return ErrTaskSetRo
 	}
 	return nil
 }
@@ -349,8 +342,7 @@ func RemoveDeviceDeferred(name string) error {
 	// disable udev dm rules and delete the symlink under /dev/mapper by itself,
 	// even if the removal is deferred by the kernel.
 	cookie := new(uint)
-	var flags uint16
-	flags = DmUdevDisableLibraryFallback
+	flags := uint16(DmUdevDisableLibraryFallback)
 	if err := task.setCookie(cookie, flags); err != nil {
 		return fmt.Errorf("devicemapper: Can not set cookie: %s", err)
 	}
@@ -463,8 +455,7 @@ func CreatePool(poolName string, dataFile, metadataFile *os.File, poolBlockSize 
 	}
 
 	cookie := new(uint)
-	var flags uint16
-	flags = DmUdevDisableSubsystemRulesFlag | DmUdevDisableDiskRulesFlag | DmUdevDisableOtherRulesFlag
+	flags := uint16(DmUdevDisableSubsystemRulesFlag | DmUdevDisableDiskRulesFlag | DmUdevDisableOtherRulesFlag)
 	if err := task.setCookie(cookie, flags); err != nil {
 		return fmt.Errorf("devicemapper: Can't set cookie %s", err)
 	}
@@ -708,9 +699,14 @@ func DeleteDevice(poolName string, deviceID int) error {
 	}
 
 	dmSawBusy = false
+	dmSawEnoData = false
 	if err := task.run(); err != nil {
 		if dmSawBusy {
 			return ErrBusy
+		}
+		if dmSawEnoData {
+			logrus.Debugf("devicemapper: Device(id: %d) from pool(%s) does not exist", deviceID, poolName)
+			return nil
 		}
 		return fmt.Errorf("devicemapper: Error running DeleteDevice %s", err)
 	}

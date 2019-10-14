@@ -1,16 +1,18 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"context"
 	"fmt"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	containerpkg "github.com/docker/docker/container"
+	"github.com/docker/docker/errdefs"
+	libcontainerdtypes "github.com/docker/docker/libcontainerd/types"
 	"github.com/docker/docker/pkg/signal"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 type errNoSuchProcess struct {
@@ -21,6 +23,8 @@ type errNoSuchProcess struct {
 func (e errNoSuchProcess) Error() string {
 	return fmt.Sprintf("Cannot kill process (pid=%d) with signal %d: no such process.", e.pid, e.signal)
 }
+
+func (errNoSuchProcess) NotFound() {}
 
 // isErrNoSuchProcess returns true if the error
 // is an instance of errNoSuchProcess.
@@ -61,7 +65,7 @@ func (daemon *Daemon) killWithSignal(container *containerpkg.Container, sig int)
 	defer container.Unlock()
 
 	if !container.Running {
-		return errNotRunning{container.ID}
+		return errNotRunning(container.ID)
 	}
 
 	var unpause bool
@@ -81,6 +85,7 @@ func (daemon *Daemon) killWithSignal(container *containerpkg.Container, sig int)
 
 	if !daemon.IsShuttingDown() {
 		container.HasBeenManuallyStopped = true
+		container.CheckpointTo(daemon.containersReplica)
 	}
 
 	// if the container is currently restarting we do not need to send the signal
@@ -91,21 +96,18 @@ func (daemon *Daemon) killWithSignal(container *containerpkg.Container, sig int)
 	}
 
 	if err := daemon.kill(container, sig); err != nil {
-		err = fmt.Errorf("Cannot kill container %s: %s", container.ID, err)
-		// if container or process not exists, ignore the error
-		if strings.Contains(err.Error(), "container not found") ||
-			strings.Contains(err.Error(), "no such process") {
-			logrus.Warnf("container kill failed because of 'container not found' or 'no such process': %s", err.Error())
+		if errdefs.IsNotFound(err) {
 			unpause = false
+			logrus.WithError(err).WithField("container", container.ID).WithField("action", "kill").Debug("container kill failed because of 'container not found' or 'no such process'")
 		} else {
-			return err
+			return errors.Wrapf(err, "Cannot kill container %s", container.ID)
 		}
 	}
 
 	if unpause {
 		// above kill signal will be sent once resume is finished
-		if err := daemon.containerd.Resume(container.ID); err != nil {
-			logrus.Warn("Cannot unpause container %s: %s", container.ID, err)
+		if err := daemon.containerd.Resume(context.Background(), container.ID); err != nil {
+			logrus.Warnf("Cannot unpause container %s: %s", container.ID, err)
 		}
 	}
 
@@ -119,7 +121,7 @@ func (daemon *Daemon) killWithSignal(container *containerpkg.Container, sig int)
 // Kill forcefully terminates a container.
 func (daemon *Daemon) Kill(container *containerpkg.Container) error {
 	if !container.IsRunning() {
-		return errNotRunning{container.ID}
+		return errNotRunning(container.ID)
 	}
 
 	// 1. Send SIGKILL
@@ -156,7 +158,7 @@ func (daemon *Daemon) Kill(container *containerpkg.Container) error {
 
 	// Wait for exit with no timeout.
 	// Ignore returned status.
-	_ = <-container.Wait(context.Background(), containerpkg.WaitConditionNotRunning)
+	<-container.Wait(context.Background(), containerpkg.WaitConditionNotRunning)
 
 	return nil
 }
@@ -164,7 +166,7 @@ func (daemon *Daemon) Kill(container *containerpkg.Container) error {
 // killPossibleDeadProcess is a wrapper around killSig() suppressing "no such process" error.
 func (daemon *Daemon) killPossiblyDeadProcess(container *containerpkg.Container, sig int) error {
 	err := daemon.killWithSignal(container, sig)
-	if err == syscall.ESRCH {
+	if errdefs.IsNotFound(err) {
 		e := errNoSuchProcess{container.GetPID(), sig}
 		logrus.Debug(e)
 		return e
@@ -173,5 +175,5 @@ func (daemon *Daemon) killPossiblyDeadProcess(container *containerpkg.Container,
 }
 
 func (daemon *Daemon) kill(c *containerpkg.Container, sig int) error {
-	return daemon.containerd.Signal(c.ID, sig)
+	return daemon.containerd.SignalProcess(context.Background(), c.ID, libcontainerdtypes.InitProcessName, sig)
 }

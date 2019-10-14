@@ -1,12 +1,12 @@
-package authorization
+package authorization // import "github.com/docker/docker/pkg/authorization"
 
 import (
+	"context"
 	"net/http"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/plugingetter"
-	"golang.org/x/net/context"
+	"github.com/sirupsen/logrus"
 )
 
 // Middleware uses a list of plugins to

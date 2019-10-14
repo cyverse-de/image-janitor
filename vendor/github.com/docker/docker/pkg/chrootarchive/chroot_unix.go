@@ -1,6 +1,6 @@
 // +build !windows,!linux
 
-package chrootarchive
+package chrootarchive // import "github.com/docker/docker/pkg/chrootarchive"
 
 import "golang.org/x/sys/unix"
 
@@ -9,4 +9,8 @@ func chroot(path string) error {
 		return err
 	}
 	return unix.Chdir("/")
+}
+
+func realChroot(path string) error {
+	return chroot(path)
 }

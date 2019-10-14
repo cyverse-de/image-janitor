@@ -1,6 +1,7 @@
-package gcplogs
+package gcplogs // import "github.com/docker/docker/daemon/logger/gcplogs"
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -10,22 +11,22 @@ import (
 
 	"cloud.google.com/go/compute/metadata"
 	"cloud.google.com/go/logging"
-	"github.com/Sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/sirupsen/logrus"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 )
 
 const (
 	name = "gcplogs"
 
-	projectOptKey  = "gcp-project"
-	logLabelsKey   = "labels"
-	logEnvKey      = "env"
-	logEnvRegexKey = "env-regex"
-	logCmdKey      = "gcp-log-cmd"
-	logZoneKey     = "gcp-meta-zone"
-	logNameKey     = "gcp-meta-name"
-	logIDKey       = "gcp-meta-id"
+	projectOptKey     = "gcp-project"
+	logLabelsKey      = "labels"
+	logLabelsRegexKey = "labels-regex"
+	logEnvKey         = "env"
+	logEnvRegexKey    = "env-regex"
+	logCmdKey         = "gcp-log-cmd"
+	logZoneKey        = "gcp-meta-zone"
+	logNameKey        = "gcp-meta-name"
+	logIDKey          = "gcp-meta-id"
 )
 
 var (
@@ -210,7 +211,7 @@ func New(info logger.Info) (logger.Logger, error) {
 func ValidateLogOpts(cfg map[string]string) error {
 	for k := range cfg {
 		switch k {
-		case projectOptKey, logLabelsKey, logEnvKey, logEnvRegexKey, logCmdKey, logZoneKey, logNameKey, logIDKey:
+		case projectOptKey, logLabelsKey, logLabelsRegexKey, logEnvKey, logEnvRegexKey, logCmdKey, logZoneKey, logNameKey, logIDKey:
 		default:
 			return fmt.Errorf("%q is not a valid option for the gcplogs driver", k)
 		}

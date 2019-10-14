@@ -1,6 +1,7 @@
-package fileutils
+package fileutils // import "github.com/docker/docker/pkg/fileutils"
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
@@ -9,14 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 // CopyFile with invalid src
 func TestCopyFileWithInvalidSrc(t *testing.T) {
-	tempFolder, err := ioutil.TempDir("", "docker-fileutils-test")
+	tempFolder, err := ioutil.TempDir("", "docker-fileutils-test") // #nosec G303
 	defer os.RemoveAll(tempFolder)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +182,7 @@ func TestReadSymlinkedDirectoryToFile(t *testing.T) {
 	var err error
 	var file *os.File
 
+	// #nosec G303
 	if file, err = os.Create("/tmp/testReadSymlinkToFile"); err != nil {
 		t.Fatalf("failed to create file: %s", err)
 	}
@@ -384,9 +385,9 @@ func TestMatches(t *testing.T) {
 	for _, test := range tests {
 		desc := fmt.Sprintf("pattern=%q text=%q", test.pattern, test.text)
 		pm, err := NewPatternMatcher([]string{test.pattern})
-		require.NoError(t, err, desc)
+		assert.NilError(t, err, desc)
 		res, _ := pm.Matches(test.text)
-		assert.Equal(t, test.pass, res, desc)
+		assert.Check(t, is.Equal(test.pass, res), desc)
 	}
 }
 

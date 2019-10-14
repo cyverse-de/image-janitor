@@ -1,24 +1,23 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
-	"path/filepath"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/pkg/mount"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/plugingetter"
-	"github.com/docker/go-metrics"
+	"github.com/docker/docker/pkg/plugins"
+	metrics "github.com/docker/go-metrics"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 )
 
 const metricsPluginType = "MetricsCollector"
 
 var (
 	containerActions          metrics.LabeledTimer
-	containerStates           metrics.LabeledGauge
-	imageActions              metrics.LabeledTimer
 	networkActions            metrics.LabeledTimer
+	hostInfoFunctions         metrics.LabeledTimer
 	engineInfo                metrics.LabeledGauge
 	engineCpus                metrics.Gauge
 	engineMemory              metrics.Gauge
@@ -40,6 +39,7 @@ func init() {
 	} {
 		containerActions.WithValues(a).Update(0)
 	}
+	hostInfoFunctions = ns.NewLabeledTimer("host_info_functions", "The number of seconds it takes to call functions gathering info about the host", "function")
 
 	networkActions = ns.NewLabeledTimer("network_actions", "The number of seconds it takes to process each network action", "action")
 	engineInfo = ns.NewLabeledGauge("engine", "The information related to the engine and the OS it is running on", metrics.Unit("info"),
@@ -47,15 +47,16 @@ func init() {
 		"commit",
 		"architecture",
 		"graphdriver",
-		"kernel", "os",
+		"kernel",
+		"os",
 		"os_type",
+		"os_version",
 		"daemon_id", // ID is a randomly generated unique identifier (e.g. UUID4)
 	)
 	engineCpus = ns.NewGauge("engine_cpus", "The number of cpus that the host system of the engine has", metrics.Unit("cpus"))
 	engineMemory = ns.NewGauge("engine_memory", "The number of bytes of memory that the host system of the engine has", metrics.Bytes)
 	healthChecksCounter = ns.NewCounter("health_checks", "The total number of health checks")
 	healthChecksFailedCounter = ns.NewCounter("health_checks_failed", "The total number of failed health checks")
-	imageActions = ns.NewLabeledTimer("image_actions", "The number of seconds it takes to process each image action", "action")
 
 	stateCtr = newStateCounter(ns.NewDesc("container_states", "The count of containers in various states", metrics.Unit("containers"), "state"))
 	ns.Add(stateCtr)
@@ -119,10 +120,19 @@ func (d *Daemon) cleanupMetricsPlugins() {
 	var wg sync.WaitGroup
 	wg.Add(len(ls))
 
-	for _, p := range ls {
+	for _, plugin := range ls {
+		p := plugin
 		go func() {
 			defer wg.Done()
-			pluginStopMetricsCollection(p)
+
+			adapter, err := makePluginAdapter(p)
+			if err != nil {
+				logrus.WithError(err).WithField("plugin", p.Name()).Error("Error creating metrics plugin adapter")
+				return
+			}
+			if err := adapter.StopMetrics(); err != nil {
+				logrus.WithError(err).WithField("plugin", p.Name()).Error("Error stopping plugin metrics collection")
+			}
 		}()
 	}
 	wg.Wait()
@@ -132,24 +142,44 @@ func (d *Daemon) cleanupMetricsPlugins() {
 	}
 }
 
-type metricsPlugin struct {
-	plugingetter.CompatPlugin
+type metricsPlugin interface {
+	StartMetrics() error
+	StopMetrics() error
 }
 
-func (p metricsPlugin) sock() string {
-	return "metrics.sock"
+func makePluginAdapter(p plugingetter.CompatPlugin) (metricsPlugin, error) {
+	if pc, ok := p.(plugingetter.PluginWithV1Client); ok {
+		return &metricsPluginAdapter{pc.Client(), p.Name()}, nil
+	}
+
+	pa, ok := p.(plugingetter.PluginAddr)
+	if !ok {
+		return nil, errdefs.System(errors.Errorf("got unknown plugin type %T", p))
+	}
+
+	if pa.Protocol() != plugins.ProtocolSchemeHTTPV1 {
+		return nil, errors.Errorf("plugin protocol not supported: %s", pa.Protocol())
+	}
+
+	addr := pa.Addr()
+	client, err := plugins.NewClientWithTimeout(addr.Network()+"://"+addr.String(), nil, pa.Timeout())
+	if err != nil {
+		return nil, errors.Wrap(err, "error creating metrics plugin client")
+	}
+	return &metricsPluginAdapter{client, p.Name()}, nil
 }
 
-func (p metricsPlugin) sockBase() string {
-	return filepath.Join(p.BasePath(), "run", "docker")
+type metricsPluginAdapter struct {
+	c    *plugins.Client
+	name string
 }
 
-func pluginStartMetricsCollection(p plugingetter.CompatPlugin) error {
+func (a *metricsPluginAdapter) StartMetrics() error {
 	type metricsPluginResponse struct {
 		Err string
 	}
 	var res metricsPluginResponse
-	if err := p.Client().Call(metricsPluginType+".StartMetrics", nil, &res); err != nil {
+	if err := a.c.Call(metricsPluginType+".StartMetrics", nil, &res); err != nil {
 		return errors.Wrap(err, "could not start metrics plugin")
 	}
 	if res.Err != "" {
@@ -158,17 +188,9 @@ func pluginStartMetricsCollection(p plugingetter.CompatPlugin) error {
 	return nil
 }
 
-func pluginStopMetricsCollection(p plugingetter.CompatPlugin) {
-	if err := p.Client().Call(metricsPluginType+".StopMetrics", nil, nil); err != nil {
-		logrus.WithError(err).WithField("name", p.Name()).Error("error stopping metrics collector")
+func (a *metricsPluginAdapter) StopMetrics() error {
+	if err := a.c.Call(metricsPluginType+".StopMetrics", nil, nil); err != nil {
+		return errors.Wrap(err, "error stopping metrics collector")
 	}
-
-	mp := metricsPlugin{p}
-	sockPath := filepath.Join(mp.sockBase(), mp.sock())
-	if err := mount.Unmount(sockPath); err != nil {
-		if mounted, _ := mount.Mounted(sockPath); mounted {
-			logrus.WithError(err).WithField("name", p.Name()).WithField("socket", sockPath).Error("error unmounting metrics socket for plugin")
-		}
-	}
-	return
+	return nil
 }

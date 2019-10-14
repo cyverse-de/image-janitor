@@ -1,9 +1,8 @@
 // +build linux,cgo
 
-package devicemapper
+package devicemapper // import "github.com/docker/docker/pkg/devicemapper"
 
 /*
-#cgo LDFLAGS: -L. -ldevmapper
 #define _GNU_SOURCE
 #include <libdevmapper.h>
 #include <linux/fs.h>   // FIXME: present only for BLKGETSIZE64, maybe we can remove it?
@@ -75,7 +74,6 @@ var (
 	DmTaskSetCookie           = dmTaskSetCookieFct
 	DmTaskSetMessage          = dmTaskSetMessageFct
 	DmTaskSetName             = dmTaskSetNameFct
-	DmTaskSetRo               = dmTaskSetRoFct
 	DmTaskSetSector           = dmTaskSetSectorFct
 	DmUdevWait                = dmUdevWaitFct
 	DmUdevSetSyncSupport      = dmUdevSetSyncSupportFct
@@ -131,10 +129,6 @@ func dmTaskSetCookieFct(task *cdmTask, cookie *uint, flags uint16) int {
 
 func dmTaskSetAddNodeFct(task *cdmTask, addNode AddNodeType) int {
 	return int(C.dm_task_set_add_node((*C.struct_dm_task)(task), C.dm_add_node_t(addNode)))
-}
-
-func dmTaskSetRoFct(task *cdmTask) int {
-	return int(C.dm_task_set_ro((*C.struct_dm_task)(task)))
 }
 
 func dmTaskAddTargetFct(task *cdmTask,
@@ -212,12 +206,13 @@ func dmGetNextTargetFct(task *cdmTask, next unsafe.Pointer, start, length *uint6
 		*params = C.GoString(Cparams)
 	}()
 
+	//lint:ignore SA4000 false positive on (identical expressions on the left and right side of the '==' operator) (staticcheck)
 	nextp := C.dm_get_next_target((*C.struct_dm_task)(task), next, &Cstart, &Clength, &CtargetType, &Cparams)
 	return nextp
 }
 
 func dmUdevSetSyncSupportFct(syncWithUdev int) {
-	(C.dm_udev_set_sync_support(C.int(syncWithUdev)))
+	C.dm_udev_set_sync_support(C.int(syncWithUdev))
 }
 
 func dmUdevGetSyncSupportFct() int {

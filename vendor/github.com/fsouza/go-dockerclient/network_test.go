@@ -14,6 +14,7 @@ import (
 )
 
 func TestListNetworks(t *testing.T) {
+	t.Parallel()
 	jsonNetworks := `[
      {
              "ID": "8dfafdbc3a40",
@@ -44,6 +45,7 @@ func TestListNetworks(t *testing.T) {
 }
 
 func TestFilteredListNetworks(t *testing.T) {
+	t.Parallel()
 	jsonNetworks := `[
      {
              "ID": "9fb1e39c",
@@ -57,7 +59,9 @@ func TestFilteredListNetworks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantQuery := "filters={\"name\":{\"blah\":true}}\n"
+	wantQuery := url.Values{
+		"filters": []string{`{"name":{"blah":true}}`},
+	}
 	fakeRT := &FakeRoundTripper{message: jsonNetworks, status: http.StatusOK}
 	client := newTestClient(fakeRT)
 	opts := NetworkFilterOpts{
@@ -70,13 +74,14 @@ func TestFilteredListNetworks(t *testing.T) {
 	if !reflect.DeepEqual(containers, expected) {
 		t.Errorf("ListNetworks: Expected %#v. Got %#v.", expected, containers)
 	}
-	query := fakeRT.requests[0].URL.RawQuery
-	if query != wantQuery {
-		t.Errorf("FilteredListNetworks: Expected query: %q, got: %q", wantQuery, query)
+	query := fakeRT.requests[0].URL.Query()
+	if !reflect.DeepEqual(query, wantQuery) {
+		t.Errorf("FilteredListNetworks: wrong query\nWant %#v\nGot  %#v", wantQuery, query)
 	}
 }
 
 func TestNetworkInfo(t *testing.T) {
+	t.Parallel()
 	jsonNetwork := `{
              "ID": "8dfafdbc3a40",
              "Name": "blah",
@@ -130,6 +135,7 @@ func TestNetworkCreate(t *testing.T) {
 }
 
 func TestNetworkRemove(t *testing.T) {
+	t.Parallel()
 	id := "8dfafdbc3a40"
 	fakeRT := &FakeRoundTripper{message: "", status: http.StatusNoContent}
 	client := newTestClient(fakeRT)
@@ -149,6 +155,7 @@ func TestNetworkRemove(t *testing.T) {
 }
 
 func TestNetworkConnect(t *testing.T) {
+	t.Parallel()
 	id := "8dfafdbc3a40"
 	fakeRT := &FakeRoundTripper{message: "", status: http.StatusNoContent}
 	client := newTestClient(fakeRT)
@@ -169,6 +176,7 @@ func TestNetworkConnect(t *testing.T) {
 }
 
 func TestNetworkConnectWithEndpoint(t *testing.T) {
+	t.Parallel()
 	wantJSON := `{"Container":"foobar","EndpointConfig":{"IPAMConfig":{"IPv4Address":"8.8.8.8"},"Links":null,"Aliases":null},"Force":false}`
 	var wantObj NetworkConnectionOptions
 	json.NewDecoder(bytes.NewBuffer([]byte(wantJSON))).Decode(&wantObj)
@@ -206,6 +214,7 @@ func TestNetworkConnectWithEndpoint(t *testing.T) {
 }
 
 func TestNetworkConnectNotFound(t *testing.T) {
+	t.Parallel()
 	client := newTestClient(&FakeRoundTripper{message: "no such network container", status: http.StatusNotFound})
 	opts := NetworkConnectionOptions{Container: "foobar"}
 	err := client.ConnectNetwork("8dfafdbc3a40", opts)
@@ -215,6 +224,7 @@ func TestNetworkConnectNotFound(t *testing.T) {
 }
 
 func TestNetworkDisconnect(t *testing.T) {
+	t.Parallel()
 	id := "8dfafdbc3a40"
 	fakeRT := &FakeRoundTripper{message: "", status: http.StatusNoContent}
 	client := newTestClient(fakeRT)
@@ -235,10 +245,34 @@ func TestNetworkDisconnect(t *testing.T) {
 }
 
 func TestNetworkDisconnectNotFound(t *testing.T) {
+	t.Parallel()
 	client := newTestClient(&FakeRoundTripper{message: "no such network container", status: http.StatusNotFound})
 	opts := NetworkConnectionOptions{Container: "foobar"}
 	err := client.DisconnectNetwork("8dfafdbc3a40", opts)
 	if serr, ok := err.(*NoSuchNetworkOrContainer); !ok {
 		t.Errorf("DisconnectNetwork: wrong error type: %s.", serr)
+	}
+}
+
+func TestPruneNetworks(t *testing.T) {
+	t.Parallel()
+	results := `{
+		"NetworksDeleted": [
+			"a", "b", "c"
+		]
+	}`
+
+	expected := &PruneNetworksResults{}
+	err := json.Unmarshal([]byte(results), expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newTestClient(&FakeRoundTripper{message: results, status: http.StatusOK})
+	got, err := client.PruneNetworks(PruneNetworksOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, expected) {
+		t.Errorf("PruneNetworks: Expected %#v. Got %#v.", expected, got)
 	}
 }

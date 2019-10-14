@@ -1,7 +1,8 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,8 +13,9 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/errdefs"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestConfigListUnsupported(t *testing.T) {
@@ -22,7 +24,7 @@ func TestConfigListUnsupported(t *testing.T) {
 		client:  &http.Client{},
 	}
 	_, err := client.ConfigList(context.Background(), types.ConfigListOptions{})
-	assert.EqualError(t, err, `"config list" requires API version 1.30, but the Docker daemon API version is 1.29`)
+	assert.Check(t, is.Error(err, `"config list" requires API version 1.30, but the Docker daemon API version is 1.29`))
 }
 
 func TestConfigListError(t *testing.T) {
@@ -34,6 +36,9 @@ func TestConfigListError(t *testing.T) {
 	_, err := client.ConfigList(context.Background(), types.ConfigListOptions{})
 	if err == nil || err.Error() != "Error response from daemon: Server error" {
 		t.Fatalf("expected a Server Error, got %v", err)
+	}
+	if !errdefs.IsSystem(err) {
+		t.Fatalf("expected a Server Error, got %T", err)
 	}
 }
 

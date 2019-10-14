@@ -1,16 +1,21 @@
-package distribution
+package distribution // import "github.com/docker/docker/distribution"
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/docker/distribution/reference"
-	"github.com/opencontainers/go-digest"
+	digest "github.com/opencontainers/go-digest"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 // TestFixManifestLayers checks that fixManifestLayers removes a duplicate
@@ -102,9 +107,8 @@ func TestFixManifestLayersBadParent(t *testing.T) {
 		},
 	}
 
-	if err := fixManifestLayers(&duplicateLayerManifest); err == nil || !strings.Contains(err.Error(), "Invalid parent ID.") {
-		t.Fatalf("expected an invalid parent ID error from fixManifestLayers")
-	}
+	err := fixManifestLayers(&duplicateLayerManifest)
+	assert.Check(t, is.ErrorContains(err, "invalid parent ID"))
 }
 
 // TestValidateManifest verifies the validateManifest function
@@ -176,8 +180,28 @@ func TestValidateManifest(t *testing.T) {
 		t.Fatal("error unmarshaling manifest:", err)
 	}
 
-	verifiedManifest, err = verifySchema1Manifest(&badSignedManifest, expectedDigest)
+	_, err = verifySchema1Manifest(&badSignedManifest, expectedDigest)
 	if err == nil || !strings.HasPrefix(err.Error(), "image verification failed for digest") {
 		t.Fatal("expected validateManifest to fail with digest error")
+	}
+}
+
+func TestFormatPlatform(t *testing.T) {
+	var platform specs.Platform
+	var result = formatPlatform(platform)
+	if strings.HasPrefix(result, "unknown") {
+		t.Fatal("expected formatPlatform to show a known platform")
+	}
+	if !strings.HasPrefix(result, runtime.GOOS) {
+		t.Fatal("expected formatPlatform to show the current platform")
+	}
+	if runtime.GOOS == "windows" {
+		if !strings.HasPrefix(result, "windows") {
+			t.Fatal("expected formatPlatform to show windows platform")
+		}
+		matches, _ := regexp.MatchString("windows.* [0-9]", result)
+		if !matches {
+			t.Fatal(fmt.Sprintf("expected formatPlatform to show windows platform with a version, but got '%s'", result))
+		}
 	}
 }

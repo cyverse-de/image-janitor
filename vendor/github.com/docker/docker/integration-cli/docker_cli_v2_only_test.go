@@ -5,9 +5,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"testing"
 
-	"github.com/docker/docker/integration-cli/registry"
-	"github.com/go-check/check"
+	"github.com/docker/docker/testutil/registry"
+	"gotest.tools/assert"
 )
 
 func makefile(path string, contents string) (string, error) {
@@ -22,12 +23,12 @@ func makefile(path string, contents string) (string, error) {
 	return f.Name(), nil
 }
 
-// TestV2Only ensures that a daemon by default does not
+// TestV2Only ensures that a daemon does not
 // attempt to contact any v1 registry endpoints.
-func (s *DockerRegistrySuite) TestV2Only(c *check.C) {
+func (s *DockerRegistrySuite) TestV2Only(c *testing.T) {
 	reg, err := registry.NewMock(c)
+	assert.NilError(c, err)
 	defer reg.Close()
-	c.Assert(err, check.IsNil)
 
 	reg.RegisterHandler("/v2/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
@@ -42,79 +43,16 @@ func (s *DockerRegistrySuite) TestV2Only(c *check.C) {
 	s.d.Start(c, "--insecure-registry", reg.URL())
 
 	tmp, err := ioutil.TempDir("", "integration-cli-")
-	c.Assert(err, check.IsNil)
+	assert.NilError(c, err)
 	defer os.RemoveAll(tmp)
 
 	dockerfileName, err := makefile(tmp, fmt.Sprintf("FROM %s/busybox", reg.URL()))
-	c.Assert(err, check.IsNil, check.Commentf("Unable to create test dockerfile"))
+	assert.NilError(c, err, "Unable to create test dockerfile")
 
-	s.d.Cmd("build", "--file", dockerfileName, tmp)
-
-	s.d.Cmd("run", repoName)
-	s.d.Cmd("login", "-u", "richard", "-p", "testtest", reg.URL())
-	s.d.Cmd("tag", "busybox", repoName)
-	s.d.Cmd("push", repoName)
-	s.d.Cmd("pull", repoName)
-}
-
-// TestV1 starts a daemon with legacy registries enabled
-// and ensure v1 endpoints are hit for the following operations:
-// login, push, pull, build & run
-func (s *DockerRegistrySuite) TestV1(c *check.C) {
-	reg, err := registry.NewMock(c)
-	defer reg.Close()
-	c.Assert(err, check.IsNil)
-
-	v2Pings := 0
-	reg.RegisterHandler("/v2/", func(w http.ResponseWriter, r *http.Request) {
-		v2Pings++
-		// V2 ping 404 causes fallback to v1
-		w.WriteHeader(404)
-	})
-
-	v1Pings := 0
-	reg.RegisterHandler("/v1/_ping", func(w http.ResponseWriter, r *http.Request) {
-		v1Pings++
-	})
-
-	v1Logins := 0
-	reg.RegisterHandler("/v1/users/", func(w http.ResponseWriter, r *http.Request) {
-		v1Logins++
-	})
-
-	v1Repo := 0
-	reg.RegisterHandler("/v1/repositories/busybox/", func(w http.ResponseWriter, r *http.Request) {
-		v1Repo++
-	})
-
-	reg.RegisterHandler("/v1/repositories/busybox/images", func(w http.ResponseWriter, r *http.Request) {
-		v1Repo++
-	})
-
-	s.d.Start(c, "--insecure-registry", reg.URL(), "--disable-legacy-registry=false")
-
-	tmp, err := ioutil.TempDir("", "integration-cli-")
-	c.Assert(err, check.IsNil)
-	defer os.RemoveAll(tmp)
-
-	dockerfileName, err := makefile(tmp, fmt.Sprintf("FROM %s/busybox", reg.URL()))
-	c.Assert(err, check.IsNil, check.Commentf("Unable to create test dockerfile"))
-
-	s.d.Cmd("build", "--file", dockerfileName, tmp)
-	c.Assert(v1Repo, check.Equals, 1, check.Commentf("Expected v1 repository access after build"))
-
-	repoName := fmt.Sprintf("%s/busybox", reg.URL())
-	s.d.Cmd("run", repoName)
-	c.Assert(v1Repo, check.Equals, 2, check.Commentf("Expected v1 repository access after run"))
-
-	s.d.Cmd("login", "-u", "richard", "-p", "testtest", reg.URL())
-	c.Assert(v1Logins, check.Equals, 1, check.Commentf("Expected v1 login attempt"))
-
-	s.d.Cmd("tag", "busybox", repoName)
-	s.d.Cmd("push", repoName)
-
-	c.Assert(v1Repo, check.Equals, 2)
-
-	s.d.Cmd("pull", repoName)
-	c.Assert(v1Repo, check.Equals, 3, check.Commentf("Expected v1 repository access after pull"))
+	_, _ = s.d.Cmd("build", "--file", dockerfileName, tmp)
+	_, _ = s.d.Cmd("run", repoName)
+	_, _ = s.d.Cmd("login", "-u", "richard", "-p", "testtest", reg.URL())
+	_, _ = s.d.Cmd("tag", "busybox", repoName)
+	_, _ = s.d.Cmd("push", repoName)
+	_, _ = s.d.Cmd("pull", repoName)
 }

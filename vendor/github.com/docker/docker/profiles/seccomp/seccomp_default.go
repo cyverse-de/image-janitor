@@ -1,6 +1,6 @@
 // +build linux,seccomp
 
-package seccomp
+package seccomp // import "github.com/docker/docker/profiles/seccomp"
 
 import (
 	"github.com/docker/docker/api/types"
@@ -49,7 +49,6 @@ func DefaultProfile() *types.Seccomp {
 				"accept4",
 				"access",
 				"adjtimex",
-				"alarm",
 				"alarm",
 				"bind",
 				"brk",
@@ -156,10 +155,14 @@ func DefaultProfile() *types.Seccomp {
 				"ioctl",
 				"io_destroy",
 				"io_getevents",
+				"io_pgetevents",
 				"ioprio_get",
 				"ioprio_set",
 				"io_setup",
 				"io_submit",
+				"io_uring_enter",
+				"io_uring_register",
+				"io_uring_setup",
 				"ipc",
 				"kill",
 				"lchown",
@@ -307,6 +310,7 @@ func DefaultProfile() *types.Seccomp {
 				"sigaltstack",
 				"signalfd",
 				"signalfd4",
+				"sigprocmask",
 				"sigreturn",
 				"socket",
 				"socketcall",
@@ -316,13 +320,13 @@ func DefaultProfile() *types.Seccomp {
 				"stat64",
 				"statfs",
 				"statfs64",
+				"statx",
 				"symlink",
 				"symlinkat",
 				"sync",
 				"sync_file_range",
 				"syncfs",
 				"sysinfo",
-				"syslog",
 				"tee",
 				"tgkill",
 				"time",
@@ -356,6 +360,13 @@ func DefaultProfile() *types.Seccomp {
 			},
 			Action: types.ActAllow,
 			Args:   []*types.Arg{},
+		},
+		{
+			Names:  []string{"ptrace"},
+			Action: types.ActAllow,
+			Includes: types.Filter{
+				MinKernel: "4.8",
+			},
 		},
 		{
 			Names:  []string{"personality"},
@@ -488,9 +499,11 @@ func DefaultProfile() *types.Seccomp {
 				"mount",
 				"name_to_handle_at",
 				"perf_event_open",
+				"quotactl",
 				"setdomainname",
 				"sethostname",
 				"setns",
+				"syslog",
 				"umount",
 				"umount2",
 				"unshare",
@@ -509,7 +522,7 @@ func DefaultProfile() *types.Seccomp {
 			Args: []*types.Arg{
 				{
 					Index:    0,
-					Value:    unix.CLONE_NEWNS | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC | unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET,
+					Value:    unix.CLONE_NEWNS | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC | unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET | unix.CLONE_NEWCGROUP,
 					ValueTwo: 0,
 					Op:       types.OpMaskedEqual,
 				},
@@ -527,7 +540,7 @@ func DefaultProfile() *types.Seccomp {
 			Args: []*types.Arg{
 				{
 					Index:    1,
-					Value:    unix.CLONE_NEWNS | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC | unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET,
+					Value:    unix.CLONE_NEWNS | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC | unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET | unix.CLONE_NEWCGROUP,
 					ValueTwo: 0,
 					Op:       types.OpMaskedEqual,
 				},
@@ -627,6 +640,28 @@ func DefaultProfile() *types.Seccomp {
 			Args:   []*types.Arg{},
 			Includes: types.Filter{
 				Caps: []string{"CAP_SYS_TTY_CONFIG"},
+			},
+		},
+		{
+			Names: []string{
+				"get_mempolicy",
+				"mbind",
+				"set_mempolicy",
+			},
+			Action: types.ActAllow,
+			Args:   []*types.Arg{},
+			Includes: types.Filter{
+				Caps: []string{"CAP_SYS_NICE"},
+			},
+		},
+		{
+			Names: []string{
+				"syslog",
+			},
+			Action: types.ActAllow,
+			Args:   []*types.Arg{},
+			Includes: types.Filter{
+				Caps: []string{"CAP_SYSLOG"},
 			},
 		},
 	}

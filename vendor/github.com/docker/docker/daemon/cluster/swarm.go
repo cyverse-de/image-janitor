@@ -1,24 +1,25 @@
-package cluster
+package cluster // import "github.com/docker/docker/daemon/cluster"
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
-	apierrors "github.com/docker/docker/api/errors"
 	apitypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	types "github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/daemon/cluster/convert"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/signal"
 	swarmapi "github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/manager/encryption"
 	swarmnode "github.com/docker/swarmkit/node"
 	"github.com/pkg/errors"
-	"golang.org/x/net/context"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 )
 
 // Init initializes new cluster from user provided request.
@@ -27,9 +28,13 @@ func (c *Cluster) Init(req types.InitRequest) (string, error) {
 	defer c.controlMutex.Unlock()
 	if c.nr != nil {
 		if req.ForceNewCluster {
+
 			// Take c.mu temporarily to wait for presently running
 			// API handlers to finish before shutting down the node.
 			c.mu.Lock()
+			if !c.nr.nodeState.IsManager() {
+				return "", errSwarmNotManager
+			}
 			c.mu.Unlock()
 
 			if err := c.nr.Stop(); err != nil {
@@ -41,7 +46,7 @@ func (c *Cluster) Init(req types.InitRequest) (string, error) {
 	}
 
 	if err := validateAndSanitizeInitRequest(&req); err != nil {
-		return "", apierrors.NewBadRequestError(err)
+		return "", errdefs.InvalidParameter(err)
 	}
 
 	listenHost, listenPort, err := resolveListenAddr(req.ListenAddr)
@@ -88,14 +93,27 @@ func (c *Cluster) Init(req types.InitRequest) (string, error) {
 		}
 	}
 
+	//Validate Default Address Pool input
+	if err := validateDefaultAddrPool(req.DefaultAddrPool, req.SubnetSize); err != nil {
+		return "", err
+	}
+
+	port, err := getDataPathPort(req.DataPathPort)
+	if err != nil {
+		return "", err
+	}
+
 	nr, err := c.newNodeRunner(nodeStartConfig{
-		forceNewCluster: req.ForceNewCluster,
-		autolock:        req.AutoLockManagers,
-		LocalAddr:       localAddr,
-		ListenAddr:      net.JoinHostPort(listenHost, listenPort),
-		AdvertiseAddr:   net.JoinHostPort(advertiseHost, advertisePort),
-		DataPathAddr:    dataPathAddr,
-		availability:    req.Availability,
+		forceNewCluster:    req.ForceNewCluster,
+		autolock:           req.AutoLockManagers,
+		LocalAddr:          localAddr,
+		ListenAddr:         net.JoinHostPort(listenHost, listenPort),
+		AdvertiseAddr:      net.JoinHostPort(advertiseHost, advertisePort),
+		DataPathAddr:       dataPathAddr,
+		DefaultAddressPool: req.DefaultAddrPool,
+		SubnetSize:         req.SubnetSize,
+		availability:       req.Availability,
+		DataPathPort:       port,
 	})
 	if err != nil {
 		return "", err
@@ -132,12 +150,12 @@ func (c *Cluster) Join(req types.JoinRequest) error {
 	c.mu.Lock()
 	if c.nr != nil {
 		c.mu.Unlock()
-		return errSwarmExists
+		return errors.WithStack(errSwarmExists)
 	}
 	c.mu.Unlock()
 
 	if err := validateAndSanitizeJoinRequest(&req); err != nil {
-		return apierrors.NewBadRequestError(err)
+		return errdefs.InvalidParameter(err)
 	}
 
 	listenHost, listenPort, err := resolveListenAddr(req.ListenAddr)
@@ -177,8 +195,11 @@ func (c *Cluster) Join(req types.JoinRequest) error {
 	c.nr = nr
 	c.mu.Unlock()
 
+	timeout := time.NewTimer(swarmConnectTimeout)
+	defer timeout.Stop()
+
 	select {
-	case <-time.After(swarmConnectTimeout):
+	case <-timeout.C:
 		return errSwarmJoinTimeoutReached
 	case err := <-nr.Ready():
 		if err != nil {
@@ -195,9 +216,9 @@ func (c *Cluster) Join(req types.JoinRequest) error {
 
 // Inspect retrieves the configuration properties of a managed swarm cluster.
 func (c *Cluster) Inspect() (types.Swarm, error) {
-	var swarm *swarmapi.Cluster
+	var swarm types.Swarm
 	if err := c.lockedManagerAction(func(ctx context.Context, state nodeState) error {
-		s, err := getSwarm(ctx, state.controlClient)
+		s, err := c.inspect(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -206,7 +227,15 @@ func (c *Cluster) Inspect() (types.Swarm, error) {
 	}); err != nil {
 		return types.Swarm{}, err
 	}
-	return convert.SwarmFromGRPC(*swarm), nil
+	return swarm, nil
+}
+
+func (c *Cluster) inspect(ctx context.Context, state nodeState) (types.Swarm, error) {
+	s, err := getSwarm(ctx, state.controlClient)
+	if err != nil {
+		return types.Swarm{}, err
+	}
+	return convert.SwarmFromGRPC(*s), nil
 }
 
 // Update updates configuration of a managed swarm cluster.
@@ -217,12 +246,19 @@ func (c *Cluster) Update(version uint64, spec types.Spec, flags types.UpdateFlag
 			return err
 		}
 
+		// Validate spec name.
+		if spec.Annotations.Name == "" {
+			spec.Annotations.Name = "default"
+		} else if spec.Annotations.Name != "default" {
+			return errdefs.InvalidParameter(errors.New(`swarm spec must be named "default"`))
+		}
+
 		// In update, client should provide the complete spec of the swarm, including
 		// Name and Labels. If a field is specified with 0 or nil, then the default value
 		// will be used to swarmkit.
 		clusterSpec, err := convert.SwarmSpecToGRPC(spec)
 		if err != nil {
-			return apierrors.NewBadRequestError(err)
+			return errdefs.InvalidParameter(err)
 		}
 
 		_, err = state.controlClient.UpdateCluster(
@@ -284,7 +320,7 @@ func (c *Cluster) UnlockSwarm(req types.UnlockRequest) error {
 	} else {
 		// when manager is active, return an error of "not locked"
 		c.mu.RUnlock()
-		return errors.New("swarm is not locked")
+		return notLockedError{}
 	}
 
 	// only when swarm is locked, code running reaches here
@@ -293,7 +329,7 @@ func (c *Cluster) UnlockSwarm(req types.UnlockRequest) error {
 
 	key, err := encryption.ParseHumanReadableKey(req.UnlockKey)
 	if err != nil {
-		return err
+		return errdefs.InvalidParameter(err)
 	}
 
 	config := nr.config
@@ -312,9 +348,9 @@ func (c *Cluster) UnlockSwarm(req types.UnlockRequest) error {
 
 	if err := <-nr.Ready(); err != nil {
 		if errors.Cause(err) == errSwarmLocked {
-			return errors.New("swarm could not be unlocked: invalid key provided")
+			return invalidUnlockKey{}
 		}
-		return fmt.Errorf("swarm component could not be started: %v", err)
+		return errors.Errorf("swarm component could not be started: %v", err)
 	}
 	return nil
 }
@@ -328,7 +364,7 @@ func (c *Cluster) Leave(force bool) error {
 	nr := c.nr
 	if nr == nil {
 		c.mu.Unlock()
-		return errNoSwarm
+		return errors.WithStack(errNoSwarm)
 	}
 
 	state := c.currentNodeState()
@@ -337,7 +373,7 @@ func (c *Cluster) Leave(force bool) error {
 
 	if errors.Cause(state.err) == errSwarmLocked && !force {
 		// leave a locked swarm without --force is not allowed
-		return errors.New("Swarm is encrypted and locked. Please unlock it first or use `--force` to ignore this message.")
+		return errors.WithStack(notAvailableError("Swarm is encrypted and locked. Please unlock it first or use `--force` to ignore this message."))
 	}
 
 	if state.IsManager() && !force {
@@ -348,7 +384,7 @@ func (c *Cluster) Leave(force bool) error {
 				if active && removingManagerCausesLossOfQuorum(reachable, unreachable) {
 					if isLastManager(reachable, unreachable) {
 						msg += "Removing the last manager erases all current state of the swarm. Use `--force` to ignore this message. "
-						return errors.New(msg)
+						return errors.WithStack(notAvailableError(msg))
 					}
 					msg += fmt.Sprintf("Removing this node leaves %v managers out of %v. Without a Raft quorum your swarm will be inaccessible. ", reachable-1, reachable+unreachable)
 				}
@@ -358,7 +394,7 @@ func (c *Cluster) Leave(force bool) error {
 		}
 
 		msg += "The only way to restore a swarm that has lost consensus is to reinitialize it with `--force-new-cluster`. Use `--force` to suppress this message."
-		return errors.New(msg)
+		return errors.WithStack(notAvailableError(msg))
 	}
 	// release readers in here
 	if err := nr.Stop(); err != nil {
@@ -410,14 +446,17 @@ func (c *Cluster) Info() types.Info {
 
 	if state.IsActiveManager() {
 		info.ControlAvailable = true
-		swarm, err := c.Inspect()
+		swarm, err := c.inspect(ctx, state)
 		if err != nil {
 			info.Error = err.Error()
 		}
 
 		info.Cluster = &swarm.ClusterInfo
 
-		if r, err := state.controlClient.ListNodes(ctx, &swarmapi.ListNodesRequest{}); err != nil {
+		if r, err := state.controlClient.ListNodes(
+			ctx, &swarmapi.ListNodesRequest{},
+			grpc.MaxCallRecvMsgSize(defaultRecvSizeForListResponse),
+		); err != nil {
 			info.Error = err.Error()
 		} else {
 			info.Nodes = len(r.Nodes)
@@ -425,6 +464,20 @@ func (c *Cluster) Info() types.Info {
 				if n.ManagerStatus != nil {
 					info.Managers = info.Managers + 1
 				}
+			}
+		}
+
+		switch info.LocalNodeState {
+		case types.LocalNodeStateInactive, types.LocalNodeStateLocked, types.LocalNodeStateError:
+			// nothing to do
+		default:
+			if info.Managers == 2 {
+				const warn string = `WARNING: Running Swarm in a two-manager configuration. This configuration provides
+         no fault tolerance, and poses a high risk to lose control over the cluster.
+         Refer to https://docs.docker.com/engine/swarm/admin_guide/ to configure the
+         Swarm for fault-tolerance.`
+
+				info.Warnings = append(info.Warnings, warn)
 			}
 		}
 	}
@@ -485,7 +538,8 @@ func validateAddr(addr string) (string, error) {
 }
 
 func initClusterSpec(node *swarmnode.Node, spec types.Spec) error {
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	for conn := range node.ListenControlSocket(ctx) {
 		if ctx.Err() != nil {
 			return ctx.Err()

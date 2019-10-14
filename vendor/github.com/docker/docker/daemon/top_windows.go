@@ -1,12 +1,13 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/go-units"
+	units "github.com/docker/go-units"
 )
 
 // ContainerTop handles `docker top` client requests.
@@ -34,7 +35,15 @@ func (daemon *Daemon) ContainerTop(name string, psArgs string) (*containertypes.
 		return nil, err
 	}
 
-	s, err := daemon.containerd.Summary(container.ID)
+	if !container.IsRunning() {
+		return nil, errNotRunning(container.ID)
+	}
+
+	if container.IsRestarting() {
+		return nil, errContainerIsRestarting(container.ID)
+	}
+
+	s, err := daemon.containerd.Summary(context.Background(), container.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,12 +51,13 @@ func (daemon *Daemon) ContainerTop(name string, psArgs string) (*containertypes.
 	procList.Titles = []string{"Name", "PID", "CPU", "Private Working Set"}
 
 	for _, j := range s {
-		d := time.Duration((j.KernelTime100ns + j.UserTime100ns) * 100) // Combined time in nanoseconds
+		d := time.Duration((j.KernelTime_100Ns + j.UserTime_100Ns) * 100) // Combined time in nanoseconds
 		procList.Processes = append(procList.Processes, []string{
 			j.ImageName,
-			fmt.Sprint(j.ProcessId),
+			fmt.Sprint(j.ProcessID),
 			fmt.Sprintf("%02d:%02d:%02d.%03d", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Nanoseconds()/1000000)%1000),
 			units.HumanSize(float64(j.MemoryWorkingSetPrivateBytes))})
 	}
+
 	return procList, nil
 }

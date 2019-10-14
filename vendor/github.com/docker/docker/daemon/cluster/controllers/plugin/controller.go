@@ -1,31 +1,32 @@
-package plugin
+package plugin // import "github.com/docker/docker/daemon/cluster/controllers/plugin"
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 	"net/http"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
 	enginetypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/swarm/runtime"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/plugin"
-	"github.com/docker/docker/plugin/v2"
+	v2 "github.com/docker/docker/plugin/v2"
 	"github.com/docker/swarmkit/api"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
-	"golang.org/x/net/context"
+	"github.com/sirupsen/logrus"
 )
 
 // Controller is the controller for the plugin backend.
 // Plugins are managed as a singleton object with a desired state (different from containers).
-// With the the plugin controller instead of having a strict create->start->stop->remove
+// With the plugin controller instead of having a strict create->start->stop->remove
 // task lifecycle like containers, we manage the desired state of the plugin and let
 // the plugin manager do what it already does and monitor the plugin.
 // We'll also end up with many tasks all pointing to the same plugin ID.
 //
 // TODO(@cpuguy83): registry auth is intentionally not supported until we work out
-// the right way to pass registry crednetials via secrets.
+// the right way to pass registry credentials via secrets.
 type Controller struct {
 	backend Backend
 	spec    runtime.PluginSpec
@@ -33,7 +34,6 @@ type Controller struct {
 
 	pluginID  string
 	serviceID string
-	taskID    string
 
 	// hook used to signal tests that `Wait()` is actually ready and waiting
 	signalWaitReady func()
@@ -121,7 +121,7 @@ func (p *Controller) Prepare(ctx context.Context) (err error) {
 		return p.backend.Upgrade(ctx, remote, p.spec.Name, nil, &authConfig, privs, ioutil.Discard)
 	}
 
-	if err := p.backend.Pull(ctx, remote, p.spec.Name, nil, &authConfig, privs, ioutil.Discard, plugin.WithSwarmService(p.serviceID)); err != nil {
+	if err := p.backend.Pull(ctx, remote, p.spec.Name, nil, &authConfig, privs, ioutil.Discard, plugin.WithSwarmService(p.serviceID), plugin.WithEnv(p.spec.Env)); err != nil {
 		return err
 	}
 	pl, err = p.backend.Get(p.spec.Name)
@@ -179,7 +179,7 @@ func (p *Controller) Wait(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case e := <-events:
-			p.logger.Debugf("got event %#T", e)
+			p.logger.Debugf("got event %T", e)
 
 			switch e.(type) {
 			case plugin.EventEnable:
@@ -198,8 +198,7 @@ func (p *Controller) Wait(ctx context.Context) error {
 }
 
 func isNotFound(err error) bool {
-	_, ok := errors.Cause(err).(plugin.ErrNotFound)
-	return ok
+	return errdefs.IsNotFound(err)
 }
 
 // Shutdown is the shutdown phase from swarmkit

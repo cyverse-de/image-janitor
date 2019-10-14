@@ -1,9 +1,9 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/builder"
+	"github.com/sirupsen/logrus"
 )
 
 // ImageProber exposes an Image cache to the Builder. It supports resetting a
@@ -19,13 +19,13 @@ type imageProber struct {
 	cacheBusted bool
 }
 
-func newImageProber(cacheBuilder builder.ImageCacheBuilder, cacheFrom []string, platform string, noCache bool) ImageProber {
+func newImageProber(cacheBuilder builder.ImageCacheBuilder, cacheFrom []string, noCache bool) ImageProber {
 	if noCache {
 		return &nopProber{}
 	}
 
 	reset := func() builder.ImageCache {
-		return cacheBuilder.MakeImageCache(cacheFrom, platform)
+		return cacheBuilder.MakeImageCache(cacheFrom)
 	}
 	return &imageProber{cache: reset(), reset: reset}
 }

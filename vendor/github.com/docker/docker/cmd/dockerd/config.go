@@ -3,8 +3,11 @@ package main
 import (
 	"runtime"
 
+	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/opts"
+	"github.com/docker/docker/plugin/executor/containerd"
+	"github.com/docker/docker/registry"
 	"github.com/spf13/pflag"
 )
 
@@ -16,25 +19,40 @@ const (
 )
 
 // installCommonConfigFlags adds flags to the pflag.FlagSet to configure the daemon
-func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) {
-	var maxConcurrentDownloads, maxConcurrentUploads int
+func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
+	var maxConcurrentDownloads, maxConcurrentUploads, maxDownloadAttempts int
+	defaultPidFile, err := getDefaultPidFile()
+	if err != nil {
+		return err
+	}
+	defaultDataRoot, err := getDefaultDataRoot()
+	if err != nil {
+		return err
+	}
+	defaultExecRoot, err := getDefaultExecRoot()
+	if err != nil {
+		return err
+	}
 
-	conf.ServiceOptions.InstallCliFlags(flags)
+	installRegistryServiceFlags(&conf.ServiceOptions, flags)
 
 	flags.Var(opts.NewNamedListOptsRef("storage-opts", &conf.GraphOptions, nil), "storage-opt", "Storage driver options")
 	flags.Var(opts.NewNamedListOptsRef("authorization-plugins", &conf.AuthorizationPlugins, nil), "authorization-plugin", "Authorization plugins to load")
 	flags.Var(opts.NewNamedListOptsRef("exec-opts", &conf.ExecOptions, nil), "exec-opt", "Runtime execution options")
 	flags.StringVarP(&conf.Pidfile, "pidfile", "p", defaultPidFile, "Path to use for daemon PID file")
 	flags.StringVarP(&conf.Root, "graph", "g", defaultDataRoot, "Root of the Docker runtime")
+	flags.StringVar(&conf.ExecRoot, "exec-root", defaultExecRoot, "Root directory for execution state files")
+	flags.StringVar(&conf.ContainerdAddr, "containerd", "", "containerd grpc address")
+	flags.BoolVar(&conf.CriContainerd, "cri-containerd", false, "start containerd with cri")
 
 	// "--graph" is "soft-deprecated" in favor of "data-root". This flag was added
 	// before Docker 1.0, so won't be removed, only hidden, to discourage its usage.
-	flags.MarkHidden("graph")
+	_ = flags.MarkHidden("graph")
 
 	flags.StringVar(&conf.Root, "data-root", defaultDataRoot, "Root directory of persistent Docker state")
 
 	flags.BoolVarP(&conf.AutoRestart, "restart", "r", true, "--restart on the daemon has been deprecated in favor of --restart policies on docker run")
-	flags.MarkDeprecated("restart", "Please use a restart policy on docker run")
+	_ = flags.MarkDeprecated("restart", "Please use a restart policy on docker run")
 
 	// Windows doesn't support setting the storage driver - there is no choice as to which ones to use.
 	if runtime.GOOS != "windows" {
@@ -55,20 +73,37 @@ func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) {
 	flags.StringVar(&conf.CorsHeaders, "api-cors-header", "", "Set CORS headers in the Engine API")
 	flags.IntVar(&maxConcurrentDownloads, "max-concurrent-downloads", config.DefaultMaxConcurrentDownloads, "Set the max concurrent downloads for each pull")
 	flags.IntVar(&maxConcurrentUploads, "max-concurrent-uploads", config.DefaultMaxConcurrentUploads, "Set the max concurrent uploads for each push")
+	flags.IntVar(&maxDownloadAttempts, "max-download-attempts", config.DefaultDownloadAttempts, "Set the max download attempts for each pull")
 	flags.IntVar(&conf.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "Set the default shutdown timeout")
+	flags.IntVar(&conf.NetworkDiagnosticPort, "network-diagnostic-port", 0, "TCP port number of the network diagnostic server")
+	_ = flags.MarkHidden("network-diagnostic-port")
 
 	flags.StringVar(&conf.SwarmDefaultAdvertiseAddr, "swarm-default-advertise-addr", "", "Set default address or interface for swarm advertised address")
 	flags.BoolVar(&conf.Experimental, "experimental", false, "Enable experimental features")
-
 	flags.StringVar(&conf.MetricsAddress, "metrics-addr", "", "Set default address and port to serve the metrics api on")
 
-	// "--deprecated-key-path" is to allow configuration of the key used
-	// for the daemon ID and the deprecated image signing. It was never
-	// exposed as a command line option but is added here to allow
-	// overriding the default path in configuration.
-	flags.Var(opts.NewQuotedString(&conf.TrustKeyPath), "deprecated-key-path", "Path to key file for ID and image signing")
-	flags.MarkHidden("deprecated-key-path")
+	flags.Var(opts.NewNamedListOptsRef("node-generic-resources", &conf.NodeGenericResources, opts.ValidateSingleGenericResource), "node-generic-resource", "Advertise user-defined resource")
+
+	flags.IntVar(&conf.NetworkControlPlaneMTU, "network-control-plane-mtu", config.DefaultNetworkMtu, "Network Control plane MTU")
 
 	conf.MaxConcurrentDownloads = &maxConcurrentDownloads
 	conf.MaxConcurrentUploads = &maxConcurrentUploads
+	conf.MaxDownloadAttempts = &maxDownloadAttempts
+
+	flags.StringVar(&conf.ContainerdNamespace, "containerd-namespace", daemon.ContainersNamespace, "Containerd namespace to use")
+	if err := flags.MarkHidden("containerd-namespace"); err != nil {
+		return err
+	}
+	flags.StringVar(&conf.ContainerdPluginNamespace, "containerd-plugins-namespace", containerd.PluginNamespace, "Containerd namespace to use for plugins")
+	return flags.MarkHidden("containerd-plugins-namespace")
+}
+
+func installRegistryServiceFlags(options *registry.ServiceOptions, flags *pflag.FlagSet) {
+	ana := opts.NewNamedListOptsRef("allow-nondistributable-artifacts", &options.AllowNondistributableArtifacts, registry.ValidateIndexName)
+	mirrors := opts.NewNamedListOptsRef("registry-mirrors", &options.Mirrors, registry.ValidateMirror)
+	insecureRegistries := opts.NewNamedListOptsRef("insecure-registries", &options.InsecureRegistries, registry.ValidateIndexName)
+
+	flags.Var(ana, "allow-nondistributable-artifacts", "Allow push of nondistributable artifacts to registry")
+	flags.Var(mirrors, "registry-mirror", "Preferred Docker registry mirror")
+	flags.Var(insecureRegistries, "insecure-registry", "Enable insecure registry communication")
 }

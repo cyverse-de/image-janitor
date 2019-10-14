@@ -1,19 +1,20 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
+	"context"
 	"errors"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 // TestPingFail tests that when a server sends a non-successful response that we
 // can still grab API details, when set.
-// Some of this is just excercising the code paths to make sure there are no
+// Some of this is just exercising the code paths to make sure there are no
 // panics.
 func TestPingFail(t *testing.T) {
 	var withHeader bool
@@ -31,15 +32,15 @@ func TestPingFail(t *testing.T) {
 	}
 
 	ping, err := client.Ping(context.Background())
-	assert.Error(t, err)
-	assert.Equal(t, false, ping.Experimental)
-	assert.Equal(t, "", ping.APIVersion)
+	assert.ErrorContains(t, err, "some error with the server")
+	assert.Check(t, is.Equal(false, ping.Experimental))
+	assert.Check(t, is.Equal("", ping.APIVersion))
 
 	withHeader = true
 	ping2, err := client.Ping(context.Background())
-	assert.Error(t, err)
-	assert.Equal(t, true, ping2.Experimental)
-	assert.Equal(t, "awesome", ping2.APIVersion)
+	assert.ErrorContains(t, err, "some error with the server")
+	assert.Check(t, is.Equal(true, ping2.Experimental))
+	assert.Check(t, is.Equal("awesome", ping2.APIVersion))
 }
 
 // TestPingWithError tests the case where there is a protocol error in the ping.
@@ -57,9 +58,9 @@ func TestPingWithError(t *testing.T) {
 	}
 
 	ping, err := client.Ping(context.Background())
-	assert.Error(t, err)
-	assert.Equal(t, false, ping.Experimental)
-	assert.Equal(t, "", ping.APIVersion)
+	assert.ErrorContains(t, err, "some error")
+	assert.Check(t, is.Equal(false, ping.Experimental))
+	assert.Check(t, is.Equal("", ping.APIVersion))
 }
 
 // TestPingSuccess tests that we are able to get the expected API headers/ping
@@ -67,16 +68,62 @@ func TestPingWithError(t *testing.T) {
 func TestPingSuccess(t *testing.T) {
 	client := &Client{
 		client: newMockClient(func(req *http.Request) (*http.Response, error) {
-			resp := &http.Response{StatusCode: http.StatusInternalServerError}
+			resp := &http.Response{StatusCode: http.StatusOK}
 			resp.Header = http.Header{}
 			resp.Header.Set("API-Version", "awesome")
 			resp.Header.Set("Docker-Experimental", "true")
-			resp.Body = ioutil.NopCloser(strings.NewReader("some error with the server"))
+			resp.Body = ioutil.NopCloser(strings.NewReader("OK"))
 			return resp, nil
 		}),
 	}
 	ping, err := client.Ping(context.Background())
-	assert.Error(t, err)
-	assert.Equal(t, true, ping.Experimental)
-	assert.Equal(t, "awesome", ping.APIVersion)
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal(true, ping.Experimental))
+	assert.Check(t, is.Equal("awesome", ping.APIVersion))
+}
+
+// TestPingHeadFallback tests that the client falls back to GET if HEAD fails.
+func TestPingHeadFallback(t *testing.T) {
+	tests := []struct {
+		status   int
+		expected string
+	}{
+		{
+			status:   http.StatusOK,
+			expected: "HEAD",
+		},
+		{
+			status:   http.StatusInternalServerError,
+			expected: "HEAD",
+		},
+		{
+			status:   http.StatusNotFound,
+			expected: "HEAD, GET",
+		},
+		{
+			status:   http.StatusMethodNotAllowed,
+			expected: "HEAD, GET",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			var reqs []string
+			client := &Client{
+				client: newMockClient(func(req *http.Request) (*http.Response, error) {
+					reqs = append(reqs, req.Method)
+					resp := &http.Response{StatusCode: http.StatusOK}
+					if req.Method == http.MethodHead {
+						resp.StatusCode = tc.status
+					}
+					resp.Header = http.Header{}
+					resp.Header.Add("API-Version", strings.Join(reqs, ", "))
+					return resp, nil
+				}),
+			}
+			ping, _ := client.Ping(context.Background())
+			assert.Check(t, is.Equal(ping.APIVersion, tc.expected))
+		})
+	}
 }

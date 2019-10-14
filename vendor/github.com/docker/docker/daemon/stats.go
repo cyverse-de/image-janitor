@@ -1,13 +1,11 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"runtime"
 	"time"
-
-	"golang.org/x/net/context"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
@@ -20,11 +18,12 @@ import (
 // ContainerStats writes information about the container to the stream
 // given in the config object.
 func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, config *backend.ContainerStatsConfig) error {
-	if runtime.GOOS == "solaris" {
-		return fmt.Errorf("%+v does not support stats", runtime.GOOS)
-	}
 	// Engine API version (used for backwards compatibility)
 	apiVersion := config.Version
+
+	if runtime.GOOS == "windows" && versions.LessThan(apiVersion, "1.21") {
+		return errors.New("API versions pre v1.21 do not support stats on Windows")
+	}
 
 	container, err := daemon.GetContainer(prefixOrName)
 	if err != nil {
@@ -75,9 +74,6 @@ func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, c
 			var statsJSON interface{}
 			statsJSONPost120 := getStatJSON(v)
 			if versions.LessThan(apiVersion, "1.21") {
-				if runtime.GOOS == "windows" {
-					return errors.New("API versions pre v1.21 do not support stats on Windows")
-				}
 				var (
 					rxBytes   uint64
 					rxPackets uint64

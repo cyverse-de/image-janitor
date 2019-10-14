@@ -51,7 +51,6 @@ func _initconfig(t *testing.T) {
 	cfg.Set("condor.log_path", "/path/to/logs")
 	cfg.Set("condor.porklock_tag", "test")
 	cfg.Set("condor.filter_files", "foo,bar,baz,blippy")
-	cfg.Set("condor.request_disk", "0")
 }
 
 func inittestsFile(t *testing.T, filename string) *Job {
@@ -415,34 +414,83 @@ func TestDataContainers(t *testing.T) {
 	}
 }
 
-func TestContainerImages(t *testing.T) {
-	s := inittests(t)
-	ci := s.ContainerImages()
-	actuallen := len(ci)
-	expectedlen := 1
-	if actuallen != expectedlen {
-		t.Errorf("ContainerImages() return %d ContainerImages instead of %d", actuallen, expectedlen)
-	}
-	actual := ci[0].ID
-	expected := "fc210a84-f7cd-4067-939c-a68ec3e3bd2b"
+func validateContainerImage(t *testing.T, actualImage, expectedImage ContainerImage) {
+	actual := actualImage.ID
+	expected := expectedImage.ID
 	if actual != expected {
 		t.Errorf("ID was %s instead of %s", actual, expected)
 	}
-	actual = ci[0].Name
-	expected = "gims.iplantcollaborative.org:5000/backwards-compat"
+	actual = actualImage.Name
+	expected = expectedImage.Name
 	if actual != expected {
 		t.Errorf("Name was %s instead of %s", actual, expected)
 	}
-	actual = ci[0].Tag
-	expected = "latest"
+	actual = actualImage.Tag
+	expected = expectedImage.Tag
 	if actual != expected {
 		t.Errorf("Tag was %s instead of %s", actual, expected)
 	}
-	actual = ci[0].URL
-	expected = "https://registry.hub.docker.com/u/discoenv/backwards-compat"
+	actual = actualImage.URL
+	expected = expectedImage.URL
 	if actual != expected {
 		t.Errorf("URL was %s instead of %s", actual, expected)
 	}
+	actual = actualImage.OSGImagePath
+	expected = expectedImage.OSGImagePath
+	if actual != expected {
+		t.Errorf("OSGImagePath was %s instead of %s", actual, expected)
+	}
+}
+
+func min(n int, ns ...int) int {
+	minValue := n
+	for _, num := range ns {
+		if num < minValue {
+			minValue = num
+		}
+	}
+	return minValue
+}
+
+func validateContainerImages(t *testing.T, actualImages, expectedImages []ContainerImage) {
+	actuallen := len(actualImages)
+	expectedlen := len(expectedImages)
+	if actuallen != expectedlen {
+		t.Errorf("ContainerImages() returned %d ContainerImages instead of %d", actuallen, expectedlen)
+	}
+	for i := 0; i < min(actuallen, expectedlen); i++ {
+		validateContainerImage(t, actualImages[i], expectedImages[i])
+	}
+}
+
+func TestContainerImages(t *testing.T) {
+	s := inittests(t)
+	actualImages := s.ContainerImages()
+	expectedImages := []ContainerImage{
+		{
+			ID:           "fc210a84-f7cd-4067-939c-a68ec3e3bd2b",
+			Name:         "gims.iplantcollaborative.org:5000/backwards-compat",
+			Tag:          "latest",
+			URL:          "https://registry.hub.docker.com/u/discoenv/backwards-compat",
+			OSGImagePath: "",
+		},
+	}
+	validateContainerImages(t, actualImages, expectedImages)
+}
+
+func TestContainerImagesOSG(t *testing.T) {
+	s := inittestsFile(t, "test/test_submission_osg.json")
+	actualImages := s.ContainerImages()
+	expectedImages := []ContainerImage{
+		{
+			ID:           "fc210a84-f7cd-4067-939c-a68ec3e3bd2b",
+			Name:         "gims.iplantcollaborative.org:5000/backwards-compat",
+			Tag:          "latest",
+			URL:          "https://registry.hub.docker.com/u/discoenv/backwards-compat",
+			OSGImagePath: "/path/to/image",
+		},
+	}
+	validateContainerImages(t, actualImages, expectedImages)
 }
 
 func TestFileMetadata(t *testing.T) {
@@ -532,25 +580,25 @@ func TestOutputs(t *testing.T) {
 func TestExcludeArguments(t *testing.T) {
 	s := inittests(t)
 	actual := s.ExcludeArguments()
-	expected := []string{"--exclude", "foo,bar,baz,blippy"}
+	expected := []string{"foo", "bar", "baz", "blippy"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("ExcludeArguments() returned:\n\t%#vinstead of:\n\t%#v", actual, expected)
 	}
 	s.Steps[0].Config.Inputs[0].Retain = false
 	actual = s.ExcludeArguments()
-	expected = []string{"--exclude", "Acer-tree.txt,foo,bar,baz,blippy"}
+	expected = []string{"Acer-tree.txt", "foo", "bar", "baz", "blippy"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("ExcludeArguments() returned:\n\t%sinstead of:\n\t%s", actual, expected)
 	}
 	s.Steps[0].Config.Outputs[1].Retain = false
 	actual = s.ExcludeArguments()
-	expected = []string{"--exclude", "Acer-tree.txt,/de-app-work/logs/,foo,bar,baz,blippy"}
+	expected = []string{"Acer-tree.txt", "/de-app-work/logs/", "foo", "bar", "baz", "blippy"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("ExcludeArguments() returned:\n\t%sinstead of:\n\t%s", actual, expected)
 	}
 	s.ArchiveLogs = false
 	actual = s.ExcludeArguments()
-	expected = []string{"--exclude", "Acer-tree.txt,/de-app-work/logs/,foo,bar,baz,blippy,logs"}
+	expected = []string{"Acer-tree.txt", "/de-app-work/logs/", "foo", "bar", "baz", "blippy", "logs"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("ExcludeArguments() returned:\n\t%sinstead of:\n\t%s", actual, expected)
 	}
@@ -603,38 +651,70 @@ func TestAddRequiredMetadata(t *testing.T) {
 func TestFinalOutputArguments(t *testing.T) {
 	s := inittests(t)
 	s.AddRequiredMetadata()
-	actual := s.FinalOutputArguments()
+	actual := s.FinalOutputArguments("exclude.txt")
 	outputdir := s.OutputDirectory()
 	expected := []string{
 		"put",
 		"--user", "test_this_is_a_test",
 		"--destination", fmt.Sprintf("%s", outputdir),
+		"--config", "/configs/irods-config",
 		"-m", "attr1,value1,unit1",
 		"-m", "attr2,value2,unit2",
 		"-m", "ipc-analysis-id,c7f05682-23c8-4182-b9a2-e09650a5f49b,UUID",
 		"-m", "ipc-execution-id,07b04ce2-7757-4b21-9e15-0b4c2f44be26,UUID",
-		"--exclude", "foo,bar,baz,blippy",
+		"--exclude", "exclude.txt",
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("FinalOutputArguments() returned:\n\t%#v\ninstead of:\n\t%#v", actual, expected)
 	}
 	s.SkipParentMetadata = true
-	actual = s.FinalOutputArguments()
+	actual = s.FinalOutputArguments("exclude.txt")
 	expected = []string{
 		"put",
 		"--user", "test_this_is_a_test",
 		"--destination", fmt.Sprintf("%s", outputdir),
+		"--config", "/configs/irods-config",
 		"-m", "attr1,value1,unit1",
 		"-m", "attr2,value2,unit2",
 		"-m", "ipc-analysis-id,c7f05682-23c8-4182-b9a2-e09650a5f49b,UUID",
 		"-m", "ipc-execution-id,07b04ce2-7757-4b21-9e15-0b4c2f44be26,UUID",
-		"--exclude", "foo,bar,baz,blippy",
+		"--exclude", "exclude.txt",
 		"--skip-parent-meta",
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("FinalOutputArguments() returned:\n\t%#v\ninstead of:\n\t%#v", actual, expected)
 	}
 	_inittests(t, false)
+}
+
+func TestCPURequest(t *testing.T) {
+	s := inittests(t)
+	cpu := s.CPURequest()
+	var expected float32
+	expected = 0
+	if cpu != expected {
+		t.Errorf("CPU request was %f, not %f", cpu, expected)
+	}
+}
+
+func TestMemoryRequest(t *testing.T) {
+	s := inittests(t)
+	mem := s.MemoryRequest()
+	var expected int64
+	expected = 2048
+	if mem != expected {
+		t.Errorf("Memory request was %d, not %d", mem, expected)
+	}
+}
+
+func TestDiskRequest(t *testing.T) {
+	s := inittests(t)
+	disk := s.DiskRequest()
+	var expected int64
+	expected = 0
+	if disk != expected {
+		t.Errorf("Disk request was %d, not %d", disk, expected)
+	}
 }
 
 func TestExtractJobID(t *testing.T) {

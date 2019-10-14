@@ -1,7 +1,8 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -9,8 +10,9 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/errdefs"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestConfigUpdateUnsupported(t *testing.T) {
@@ -19,7 +21,7 @@ func TestConfigUpdateUnsupported(t *testing.T) {
 		client:  &http.Client{},
 	}
 	err := client.ConfigUpdate(context.Background(), "config_id", swarm.Version{}, swarm.ConfigSpec{})
-	assert.EqualError(t, err, `"config update" requires API version 1.30, but the Docker daemon API version is 1.29`)
+	assert.Check(t, is.Error(err, `"config update" requires API version 1.30, but the Docker daemon API version is 1.29`))
 }
 
 func TestConfigUpdateError(t *testing.T) {
@@ -31,6 +33,9 @@ func TestConfigUpdateError(t *testing.T) {
 	err := client.ConfigUpdate(context.Background(), "config_id", swarm.Version{}, swarm.ConfigSpec{})
 	if err == nil || err.Error() != "Error response from daemon: Server error" {
 		t.Fatalf("expected a Server Error, got %v", err)
+	}
+	if !errdefs.IsSystem(err) {
+		t.Fatalf("expected a Server Error, got %T", err)
 	}
 }
 

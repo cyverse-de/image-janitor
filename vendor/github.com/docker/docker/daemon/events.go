@@ -1,4 +1,4 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/container"
@@ -14,6 +13,7 @@ import (
 	"github.com/docker/libnetwork"
 	swarmapi "github.com/docker/swarmkit/api"
 	gogotypes "github.com/gogo/protobuf/types"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -42,30 +42,6 @@ func (daemon *Daemon) LogContainerEventWithAttributes(container *container.Conta
 		Attributes: attributes,
 	}
 	daemon.EventsService.Log(action, events.ContainerEventType, actor)
-}
-
-// LogImageEvent generates an event related to an image with only the default attributes.
-func (daemon *Daemon) LogImageEvent(imageID, refName, action string) {
-	daemon.LogImageEventWithAttributes(imageID, refName, action, map[string]string{})
-}
-
-// LogImageEventWithAttributes generates an event related to an image with specific given attributes.
-func (daemon *Daemon) LogImageEventWithAttributes(imageID, refName, action string, attributes map[string]string) {
-	img, err := daemon.GetImage(imageID)
-	if err == nil && img.Config != nil {
-		// image has not been removed yet.
-		// it could be missing if the event is `delete`.
-		copyAttributes(attributes, img.Config.Labels)
-	}
-	if refName != "" {
-		attributes["name"] = refName
-	}
-	actor := events.Actor{
-		ID:         imageID,
-		Attributes: attributes,
-	}
-
-	daemon.EventsService.Log(action, events.ImageEventType, actor)
 }
 
 // LogPluginEvent generates an event related to a plugin with only the default attributes.

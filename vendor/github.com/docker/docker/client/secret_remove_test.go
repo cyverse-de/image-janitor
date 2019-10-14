@@ -1,15 +1,17 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/errdefs"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestSecretRemoveUnsupported(t *testing.T) {
@@ -18,7 +20,7 @@ func TestSecretRemoveUnsupported(t *testing.T) {
 		client:  &http.Client{},
 	}
 	err := client.SecretRemove(context.Background(), "secret_id")
-	assert.EqualError(t, err, `"secret remove" requires API version 1.25, but the Docker daemon API version is 1.24`)
+	assert.Check(t, is.Error(err, `"secret remove" requires API version 1.25, but the Docker daemon API version is 1.24`))
 }
 
 func TestSecretRemoveError(t *testing.T) {
@@ -30,6 +32,9 @@ func TestSecretRemoveError(t *testing.T) {
 	err := client.SecretRemove(context.Background(), "secret_id")
 	if err == nil || err.Error() != "Error response from daemon: Server error" {
 		t.Fatalf("expected a Server Error, got %v", err)
+	}
+	if !errdefs.IsSystem(err) {
+		t.Fatalf("expected a Server Error, got %T", err)
 	}
 }
 

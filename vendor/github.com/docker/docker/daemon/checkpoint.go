@@ -1,27 +1,27 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/daemon/names"
 )
 
 var (
-	validCheckpointNameChars   = api.RestrictedNameChars
-	validCheckpointNamePattern = api.RestrictedNamePattern
+	validCheckpointNameChars   = names.RestrictedNameChars
+	validCheckpointNamePattern = names.RestrictedNamePattern
 )
 
 // getCheckpointDir verifies checkpoint directory for create,remove, list options and checks if checkpoint already exists
-func getCheckpointDir(checkDir, checkpointID string, ctrName string, ctrID string, ctrCheckpointDir string, create bool) (string, error) {
+func getCheckpointDir(checkDir, checkpointID, ctrName, ctrID, ctrCheckpointDir string, create bool) (string, error) {
 	var checkpointDir string
 	var err2 error
 	if checkDir != "" {
-		checkpointDir = filepath.Join(checkDir, ctrID, "checkpoints")
+		checkpointDir = checkDir
 	} else {
 		checkpointDir = ctrCheckpointDir
 	}
@@ -32,23 +32,23 @@ func getCheckpointDir(checkDir, checkpointID string, ctrName string, ctrID strin
 		case err == nil && stat.IsDir():
 			err2 = fmt.Errorf("checkpoint with name %s already exists for container %s", checkpointID, ctrName)
 		case err != nil && os.IsNotExist(err):
-			err2 = nil
+			err2 = os.MkdirAll(checkpointAbsDir, 0700)
 		case err != nil:
 			err2 = err
-		case err == nil:
+		default:
 			err2 = fmt.Errorf("%s exists and is not a directory", checkpointAbsDir)
 		}
 	} else {
 		switch {
 		case err != nil:
-			err2 = fmt.Errorf("checkpoint %s does not exists for container %s", checkpointID, ctrName)
-		case err == nil && stat.IsDir():
+			err2 = fmt.Errorf("checkpoint %s does not exist for container %s", checkpointID, ctrName)
+		case stat.IsDir():
 			err2 = nil
-		case err == nil:
+		default:
 			err2 = fmt.Errorf("%s exists and is not a directory", checkpointAbsDir)
 		}
 	}
-	return checkpointDir, err2
+	return checkpointAbsDir, err2
 }
 
 // CheckpointCreate checkpoints the process running in a container with CRIU
@@ -71,8 +71,9 @@ func (daemon *Daemon) CheckpointCreate(name string, config types.CheckpointCreat
 		return fmt.Errorf("cannot checkpoint container %s: %s", name, err)
 	}
 
-	err = daemon.containerd.CreateCheckpoint(container.ID, config.CheckpointID, checkpointDir, config.Exit)
+	err = daemon.containerd.CreateCheckpoint(context.Background(), container.ID, checkpointDir, config.Exit)
 	if err != nil {
+		os.RemoveAll(checkpointDir)
 		return fmt.Errorf("Cannot checkpoint container %s: %s", name, err)
 	}
 
@@ -89,7 +90,7 @@ func (daemon *Daemon) CheckpointDelete(name string, config types.CheckpointDelet
 	}
 	checkpointDir, err := getCheckpointDir(config.CheckpointDir, config.CheckpointID, name, container.ID, container.CheckpointDir(), false)
 	if err == nil {
-		return os.RemoveAll(filepath.Join(checkpointDir, config.CheckpointID))
+		return os.RemoveAll(checkpointDir)
 	}
 	return err
 }
@@ -121,15 +122,7 @@ func (daemon *Daemon) CheckpointList(name string, config types.CheckpointListOpt
 		if !d.IsDir() {
 			continue
 		}
-		path := filepath.Join(checkpointDir, d.Name(), "config.json")
-		data, err := ioutil.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		var cpt types.Checkpoint
-		if err := json.Unmarshal(data, &cpt); err != nil {
-			return nil, err
-		}
+		cpt := types.Checkpoint{Name: d.Name()}
 		out = append(out, cpt)
 	}
 

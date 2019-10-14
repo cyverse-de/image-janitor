@@ -12,32 +12,33 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"testing"
 	"time"
 
-	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/integration-cli/cli"
 	"github.com/docker/docker/integration-cli/cli/build"
-	"github.com/docker/docker/integration-cli/cli/build/fakecontext"
-	"github.com/docker/docker/pkg/testutil"
-	icmd "github.com/docker/docker/pkg/testutil/cmd"
-	"github.com/docker/go-units"
-	"github.com/go-check/check"
+	"github.com/docker/docker/testutil/fakecontext"
+	units "github.com/docker/go-units"
+	"gotest.tools/assert"
+	"gotest.tools/icmd"
 )
 
-func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
+func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *testing.T) {
 	testRequires(c, cpuCfsQuota)
 	name := "testbuildresourceconstraints"
+	buildLabel := "DockerSuite.TestBuildResourceConstraintsAreUsed"
 
 	ctx := fakecontext.New(c, "", fakecontext.WithDockerfile(`
 	FROM hello-world:frozen
 	RUN ["/hello"]
 	`))
 	cli.Docker(
-		cli.Args("build", "--no-cache", "--rm=false", "--memory=64m", "--memory-swap=-1", "--cpuset-cpus=0", "--cpuset-mems=0", "--cpu-shares=100", "--cpu-quota=8000", "--ulimit", "nofile=42", "-t", name, "."),
+		cli.Args("build", "--no-cache", "--rm=false", "--memory=64m", "--memory-swap=-1", "--cpuset-cpus=0", "--cpuset-mems=0", "--cpu-shares=100", "--cpu-quota=8000", "--ulimit", "nofile=42", "--label="+buildLabel, "-t", name, "."),
 		cli.InDir(ctx.Dir),
 	).Assert(c, icmd.Success)
 
-	out := cli.DockerCmd(c, "ps", "-lq").Combined()
+	out := cli.DockerCmd(c, "ps", "-lq", "--filter", "label="+buildLabel).Combined()
 	cID := strings.TrimSpace(out)
 
 	type hostConfig struct {
@@ -54,16 +55,16 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 
 	var c1 hostConfig
 	err := json.Unmarshal([]byte(cfg), &c1)
-	c.Assert(err, checker.IsNil, check.Commentf(cfg))
+	assert.Assert(c, err == nil, cfg)
 
-	c.Assert(c1.Memory, checker.Equals, int64(64*1024*1024), check.Commentf("resource constraints not set properly for Memory"))
-	c.Assert(c1.MemorySwap, checker.Equals, int64(-1), check.Commentf("resource constraints not set properly for MemorySwap"))
-	c.Assert(c1.CpusetCpus, checker.Equals, "0", check.Commentf("resource constraints not set properly for CpusetCpus"))
-	c.Assert(c1.CpusetMems, checker.Equals, "0", check.Commentf("resource constraints not set properly for CpusetMems"))
-	c.Assert(c1.CPUShares, checker.Equals, int64(100), check.Commentf("resource constraints not set properly for CPUShares"))
-	c.Assert(c1.CPUQuota, checker.Equals, int64(8000), check.Commentf("resource constraints not set properly for CPUQuota"))
-	c.Assert(c1.Ulimits[0].Name, checker.Equals, "nofile", check.Commentf("resource constraints not set properly for Ulimits"))
-	c.Assert(c1.Ulimits[0].Hard, checker.Equals, int64(42), check.Commentf("resource constraints not set properly for Ulimits"))
+	assert.Equal(c, c1.Memory, int64(64*1024*1024), "resource constraints not set properly for Memory")
+	assert.Equal(c, c1.MemorySwap, int64(-1), "resource constraints not set properly for MemorySwap")
+	assert.Equal(c, c1.CpusetCpus, "0", "resource constraints not set properly for CpusetCpus")
+	assert.Equal(c, c1.CpusetMems, "0", "resource constraints not set properly for CpusetMems")
+	assert.Equal(c, c1.CPUShares, int64(100), "resource constraints not set properly for CPUShares")
+	assert.Equal(c, c1.CPUQuota, int64(8000), "resource constraints not set properly for CPUQuota")
+	assert.Equal(c, c1.Ulimits[0].Name, "nofile", "resource constraints not set properly for Ulimits")
+	assert.Equal(c, c1.Ulimits[0].Hard, int64(42), "resource constraints not set properly for Ulimits")
 
 	// Make sure constraints aren't saved to image
 	cli.DockerCmd(c, "run", "--name=test", name)
@@ -72,18 +73,18 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 
 	var c2 hostConfig
 	err = json.Unmarshal([]byte(cfg), &c2)
-	c.Assert(err, checker.IsNil, check.Commentf(cfg))
+	assert.Assert(c, err == nil, cfg)
 
-	c.Assert(c2.Memory, check.Not(checker.Equals), int64(64*1024*1024), check.Commentf("resource leaked from build for Memory"))
-	c.Assert(c2.MemorySwap, check.Not(checker.Equals), int64(-1), check.Commentf("resource leaked from build for MemorySwap"))
-	c.Assert(c2.CpusetCpus, check.Not(checker.Equals), "0", check.Commentf("resource leaked from build for CpusetCpus"))
-	c.Assert(c2.CpusetMems, check.Not(checker.Equals), "0", check.Commentf("resource leaked from build for CpusetMems"))
-	c.Assert(c2.CPUShares, check.Not(checker.Equals), int64(100), check.Commentf("resource leaked from build for CPUShares"))
-	c.Assert(c2.CPUQuota, check.Not(checker.Equals), int64(8000), check.Commentf("resource leaked from build for CPUQuota"))
-	c.Assert(c2.Ulimits, checker.IsNil, check.Commentf("resource leaked from build for Ulimits"))
+	assert.Assert(c, c2.Memory != int64(64*1024*1024), "resource leaked from build for Memory")
+	assert.Assert(c, c2.MemorySwap != int64(-1), "resource leaked from build for MemorySwap")
+	assert.Assert(c, c2.CpusetCpus != "0", "resource leaked from build for CpusetCpus")
+	assert.Assert(c, c2.CpusetMems != "0", "resource leaked from build for CpusetMems")
+	assert.Assert(c, c2.CPUShares != int64(100), "resource leaked from build for CPUShares")
+	assert.Assert(c, c2.CPUQuota != int64(8000), "resource leaked from build for CPUQuota")
+	assert.Assert(c, c2.Ulimits == nil, "resource leaked from build for Ulimits")
 }
 
-func (s *DockerSuite) TestBuildAddChangeOwnership(c *check.C) {
+func (s *DockerSuite) TestBuildAddChangeOwnership(c *testing.T) {
 	testRequires(c, DaemonIsLinux)
 	name := "testbuildaddown"
 
@@ -95,7 +96,7 @@ func (s *DockerSuite) TestBuildAddChangeOwnership(c *check.C) {
 			RUN [ $(stat -c %U:%G "/bar/foo") = 'root:root' ]
 			`
 		tmpDir, err := ioutil.TempDir("", "fake-context")
-		c.Assert(err, check.IsNil)
+		assert.NilError(c, err)
 		testFile, err := os.Create(filepath.Join(tmpDir, "foo"))
 		if err != nil {
 			c.Fatalf("failed to create foo file: %v", err)
@@ -125,14 +126,18 @@ func (s *DockerSuite) TestBuildAddChangeOwnership(c *check.C) {
 // * Run a 1-year-long sleep from a docker build.
 // * When docker events sees container start, close the "docker build" command
 // * Wait for docker events to emit a dying event.
-func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
-	testRequires(c, DaemonIsLinux)
+//
+// TODO(buildkit): this test needs to be rewritten for buildkit.
+// It has been manually tested positive. Confirmed issue: docker build output parsing.
+// Potential issue: newEventObserver uses docker events, which is not hooked up to buildkit.
+func (s *DockerSuite) TestBuildCancellationKillsSleep(c *testing.T) {
+	testRequires(c, DaemonIsLinux, TODOBuildkit)
 	name := "testbuildcancellation"
 
 	observer, err := newEventObserver(c)
-	c.Assert(err, checker.IsNil)
+	assert.NilError(c, err)
 	err = observer.Start()
-	c.Assert(err, checker.IsNil)
+	assert.NilError(c, err)
 	defer observer.Stop()
 
 	// (Note: one year, will never finish)
@@ -143,11 +148,16 @@ func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
 	buildCmd.Dir = ctx.Dir
 
 	stdoutBuild, err := buildCmd.StdoutPipe()
-	c.Assert(err, checker.IsNil)
+	assert.NilError(c, err)
 
 	if err := buildCmd.Start(); err != nil {
 		c.Fatalf("failed to run build: %s", err)
 	}
+	// always clean up
+	defer func() {
+		buildCmd.Process.Kill()
+		buildCmd.Wait()
+	}()
 
 	matchCID := regexp.MustCompile("Running in (.+)")
 	scanner := bufio.NewScanner(stdoutBuild)
@@ -191,7 +201,7 @@ func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
 	}
 
 	// Get the exit status of `docker build`, check it exited because killed.
-	if err := buildCmd.Wait(); err != nil && !testutil.IsKilled(err) {
+	if err := buildCmd.Wait(); err != nil && !isKilled(err) {
 		c.Fatalf("wait failed during build run: %T %s", err, err)
 	}
 
@@ -201,4 +211,18 @@ func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
 	case <-testActions["die"]:
 		// ignore, done
 	}
+}
+
+func isKilled(err error) bool {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		status, ok := exitErr.Sys().(syscall.WaitStatus)
+		if !ok {
+			return false
+		}
+		// status.ExitStatus() is required on Windows because it does not
+		// implement Signal() nor Signaled(). Just check it had a bad exit
+		// status could mean it was killed (and in tests we do kill)
+		return (status.Signaled() && status.Signal() == os.Kill) || status.ExitStatus() != 0
+	}
+	return false
 }

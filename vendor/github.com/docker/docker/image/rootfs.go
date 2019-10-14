@@ -1,10 +1,10 @@
-package image
+package image // import "github.com/docker/docker/image"
 
 import (
 	"runtime"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/layer"
+	"github.com/sirupsen/logrus"
 )
 
 // TypeLayers is used for RootFS.Type for filesystems organized into layers.
@@ -38,7 +38,8 @@ func (r *RootFS) Append(id layer.DiffID) {
 func (r *RootFS) Clone() *RootFS {
 	newRoot := NewRootFS()
 	newRoot.Type = r.Type
-	newRoot.DiffIDs = append(r.DiffIDs)
+	newRoot.DiffIDs = make([]layer.DiffID, len(r.DiffIDs))
+	copy(newRoot.DiffIDs, r.DiffIDs)
 	return newRoot
 }
 

@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/daemon/cluster/executor/container"
 
 import (
 	"errors"
@@ -6,9 +6,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
@@ -25,15 +24,12 @@ import (
 	netconst "github.com/docker/libnetwork/datastore"
 	"github.com/docker/swarmkit/agent/exec"
 	"github.com/docker/swarmkit/api"
+	"github.com/docker/swarmkit/api/genericresource"
 	"github.com/docker/swarmkit/template"
 	gogotypes "github.com/gogo/protobuf/types"
 )
 
 const (
-	// Explicitly use the kernel's default setting for CPU quota of 100ms.
-	// https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt
-	cpuQuotaPeriod = 100 * time.Millisecond
-
 	// systemLabelPrefix represents the reserved namespace for system labels.
 	systemLabelPrefix = "com.docker.swarm"
 )
@@ -47,12 +43,12 @@ type containerConfig struct {
 
 // newContainerConfig returns a validated container config. No methods should
 // return an error if this function returns without error.
-func newContainerConfig(t *api.Task) (*containerConfig, error) {
+func newContainerConfig(t *api.Task, node *api.NodeDescription) (*containerConfig, error) {
 	var c containerConfig
-	return &c, c.setTask(t)
+	return &c, c.setTask(t, node)
 }
 
-func (c *containerConfig) setTask(t *api.Task) error {
+func (c *containerConfig) setTask(t *api.Task, node *api.NodeDescription) error {
 	if t.Spec.GetContainer() == nil && t.Spec.GetAttachment() == nil {
 		return exec.ErrRuntimeUnsupported
 	}
@@ -77,7 +73,7 @@ func (c *containerConfig) setTask(t *api.Task) error {
 	c.task = t
 
 	if t.Spec.GetContainer() != nil {
-		preparedSpec, err := template.ExpandContainerSpec(nil, t)
+		preparedSpec, err := template.ExpandContainerSpec(node, t)
 		if err != nil {
 			return err
 		}
@@ -100,10 +96,6 @@ func (c *containerConfig) networkAttachmentContainerID() string {
 
 func (c *containerConfig) taskID() string {
 	return c.task.ID
-}
-
-func (c *containerConfig) endpoint() *api.Endpoint {
-	return c.task.Endpoint
 }
 
 func (c *containerConfig) spec() *api.ContainerSpec {
@@ -167,6 +159,18 @@ func (c *containerConfig) portBindings() nat.PortMap {
 	return portBindings
 }
 
+func (c *containerConfig) isolation() enginecontainer.Isolation {
+	return convert.IsolationFromGRPC(c.spec().Isolation)
+}
+
+func (c *containerConfig) init() *bool {
+	if c.spec().Init == nil {
+		return nil
+	}
+	init := c.spec().Init.GetValue()
+	return &init
+}
+
 func (c *containerConfig) exposedPorts() map[nat.Port]struct{} {
 	exposedPorts := make(map[nat.Port]struct{})
 	if c.task.Endpoint == nil {
@@ -186,13 +190,16 @@ func (c *containerConfig) exposedPorts() map[nat.Port]struct{} {
 }
 
 func (c *containerConfig) config() *enginecontainer.Config {
+	genericEnvs := genericresource.EnvFormat(c.task.AssignedGenericResources, "DOCKER_RESOURCE")
+	env := append(c.spec().Env, genericEnvs...)
+
 	config := &enginecontainer.Config{
 		Labels:       c.labels(),
 		StopSignal:   c.spec().StopSignal,
 		Tty:          c.spec().TTY,
 		OpenStdin:    c.spec().OpenStdin,
 		User:         c.spec().User,
-		Env:          c.spec().Env,
+		Env:          env,
 		Hostname:     c.spec().Hostname,
 		WorkingDir:   c.spec().Dir,
 		Image:        c.image(),
@@ -269,6 +276,8 @@ func convertMount(m api.Mount) enginemount.Mount {
 		mount.Type = enginemount.TypeVolume
 	case api.MountTypeTmpfs:
 		mount.Type = enginemount.TypeTmpfs
+	case api.MountTypeNamedPipe:
+		mount.Type = enginemount.TypeNamedPipe
 	}
 
 	if m.BindOptions != nil {
@@ -346,6 +355,10 @@ func (c *containerConfig) hostConfig() *enginecontainer.HostConfig {
 		PortBindings:   c.portBindings(),
 		Mounts:         c.mounts(),
 		ReadonlyRootfs: c.spec().ReadOnly,
+		Isolation:      c.isolation(),
+		Init:           c.init(),
+		Sysctls:        c.spec().Sysctls,
+		Capabilities:   c.spec().Capabilities,
 	}
 
 	if c.spec().DNSConfig != nil {
@@ -389,7 +402,7 @@ func (c *containerConfig) hostConfig() *enginecontainer.HostConfig {
 }
 
 // This handles the case of volumes that are defined inside a service Mount
-func (c *containerConfig) volumeCreateRequest(mount *api.Mount) *volumetypes.VolumesCreateBody {
+func (c *containerConfig) volumeCreateRequest(mount *api.Mount) *volumetypes.VolumeCreateBody {
 	var (
 		driverName string
 		driverOpts map[string]string
@@ -403,7 +416,7 @@ func (c *containerConfig) volumeCreateRequest(mount *api.Mount) *volumetypes.Vol
 	}
 
 	if mount.VolumeOptions != nil {
-		return &volumetypes.VolumesCreateBody{
+		return &volumetypes.VolumeCreateBody{
 			Name:       mount.Source,
 			Driver:     driverName,
 			DriverOpts: driverOpts,
@@ -430,9 +443,7 @@ func (c *containerConfig) resources() enginecontainer.Resources {
 	}
 
 	if r.Limits.NanoCPUs > 0 {
-		// CPU Period must be set in microseconds.
-		resources.CPUPeriod = int64(cpuQuotaPeriod / time.Microsecond)
-		resources.CPUQuota = r.Limits.NanoCPUs * resources.CPUPeriod / 1e9
+		resources.NanoCPUs = r.Limits.NanoCPUs
 	}
 
 	return resources
@@ -566,19 +577,6 @@ func (c *containerConfig) serviceConfig() *clustertypes.ServiceConfig {
 	return svcCfg
 }
 
-// networks returns a list of network names attached to the container. The
-// returned name can be used to lookup the corresponding network create
-// options.
-func (c *containerConfig) networks() []string {
-	var networks []string
-
-	for name := range c.networksAttachments {
-		networks = append(networks, name)
-	}
-
-	return networks
-}
-
 func (c *containerConfig) networkCreateRequest(name string) (clustertypes.NetworkCreateRequest, error) {
 	na, ok := c.networksAttachments[name]
 	if !ok {
@@ -643,6 +641,8 @@ func (c *containerConfig) applyPrivileges(hc *enginecontainer.HostConfig) {
 			hc.SecurityOpt = append(hc.SecurityOpt, "credentialspec=file://"+credentials.GetFile())
 		case *api.Privileges_CredentialSpec_Registry:
 			hc.SecurityOpt = append(hc.SecurityOpt, "credentialspec=registry://"+credentials.GetRegistry())
+		case *api.Privileges_CredentialSpec_Config:
+			hc.SecurityOpt = append(hc.SecurityOpt, "credentialspec=config://"+credentials.GetConfig())
 		}
 	}
 

@@ -1,4 +1,4 @@
-package resumable
+package resumable // import "github.com/docker/docker/registry/resumable"
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 type requestReader struct {

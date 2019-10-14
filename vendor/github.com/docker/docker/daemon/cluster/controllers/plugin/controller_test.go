@@ -1,6 +1,7 @@
-package plugin
+package plugin // import "github.com/docker/docker/daemon/cluster/controllers/plugin"
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -9,14 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
 	enginetypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/swarm/runtime"
 	"github.com/docker/docker/pkg/pubsub"
 	"github.com/docker/docker/plugin"
-	"github.com/docker/docker/plugin/v2"
-	"golang.org/x/net/context"
+	v2 "github.com/docker/docker/plugin/v2"
+	"github.com/sirupsen/logrus"
 )
 
 const (

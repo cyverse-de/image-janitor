@@ -1,38 +1,39 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/swarm"
-	"github.com/docker/docker/cli/config"
-	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/integration-cli/cli"
-	"github.com/docker/docker/integration-cli/cli/build/fakestorage"
 	"github.com/docker/docker/integration-cli/daemon"
 	"github.com/docker/docker/integration-cli/environment"
-	"github.com/docker/docker/integration-cli/fixtures/plugin"
-	"github.com/docker/docker/integration-cli/registry"
+	"github.com/docker/docker/internal/test/suite"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/go-check/check"
-	"golang.org/x/net/context"
+	testdaemon "github.com/docker/docker/testutil/daemon"
+	ienv "github.com/docker/docker/testutil/environment"
+	"github.com/docker/docker/testutil/fakestorage"
+	"github.com/docker/docker/testutil/fixtures/plugin"
+	"github.com/docker/docker/testutil/registry"
+	"gotest.tools/assert"
 )
 
 const (
 	// the private registry to use for tests
-	privateRegistryURL = "127.0.0.1:5000"
+	privateRegistryURL = registry.DefaultURL
 
 	// path to containerd's ctr binary
-	ctrBinary = "docker-containerd-ctr"
+	ctrBinary = "ctr"
 
 	// the docker daemon binary to use
 	dockerdBinary = "dockerd"
@@ -43,6 +44,8 @@ var (
 
 	// the docker client binary to use
 	dockerBinary = ""
+
+	testEnvOnce sync.Once
 )
 
 func init() {
@@ -58,55 +61,114 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
+
+	// Global set up
 	dockerBinary = testEnv.DockerBinary()
-
-	if testEnv.LocalDaemon() {
-		fmt.Println("INFO: Testing against a local daemon")
-	} else {
-		fmt.Println("INFO: Testing against a remote daemon")
-	}
-	exitCode := m.Run()
-	os.Exit(exitCode)
-}
-
-func Test(t *testing.T) {
-	cli.EnsureTestEnvIsLoaded(t)
-	fakestorage.EnsureTestEnvIsLoaded(t)
-	cmd := exec.Command(dockerBinary, "images", "-f", "dangling=false", "--format", "{{.Repository}}:{{.Tag}}")
-	cmd.Env = appendBaseEnv(true)
-	out, err := cmd.CombinedOutput()
+	err := ienv.EnsureFrozenImagesLinux(&testEnv.Execution)
 	if err != nil {
-		panic(fmt.Errorf("err=%v\nout=%s\n", err, out))
+		fmt.Println(err)
+		os.Exit(1)
 	}
-	images := strings.Split(strings.TrimSpace(string(out)), "\n")
-	testEnv.ProtectImage(t, images...)
-	if testEnv.DaemonPlatform() == "linux" {
-		ensureFrozenImagesLinux(t)
-	}
-	check.TestingT(t)
+
+	testEnv.Print()
+	os.Exit(m.Run())
 }
 
-func init() {
-	check.Suite(&DockerSuite{})
+func ensureTestEnvSetup(t *testing.T) {
+	testEnvOnce.Do(func() {
+		cli.SetTestEnvironment(testEnv)
+		fakestorage.SetTestEnvironment(&testEnv.Execution)
+		ienv.ProtectAll(t, &testEnv.Execution)
+	})
+}
+
+func TestDockerSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerSuite{})
+}
+
+func TestDockerRegistrySuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerRegistrySuite{ds: &DockerSuite{}})
+}
+
+func TestDockerSchema1RegistrySuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerSchema1RegistrySuite{ds: &DockerSuite{}})
+}
+
+func TestDockerRegistryAuthHtpasswdSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerRegistryAuthHtpasswdSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerRegistryAuthTokenSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerRegistryAuthTokenSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerDaemonSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerDaemonSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerSwarmSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerSwarmSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerPluginSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	suite.Run(t, &DockerPluginSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerExternalVolumeSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	testRequires(t, DaemonIsLinux)
+	suite.Run(t, &DockerExternalVolumeSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerNetworkSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	testRequires(t, DaemonIsLinux)
+	suite.Run(t, &DockerNetworkSuite{ds: &DockerSuite{}})
+}
+
+func TestDockerHubPullSuite(t *testing.T) {
+	ensureTestEnvSetup(t)
+	// FIXME. Temporarily turning this off for Windows as GH16039 was breaking
+	// Windows to Linux CI @icecrime
+	testRequires(t, DaemonIsLinux)
+	suite.Run(t, newDockerHubPullSuite())
 }
 
 type DockerSuite struct {
 }
 
-func (s *DockerSuite) OnTimeout(c *check.C) {
-	if testEnv.DaemonPID() > 0 && testEnv.LocalDaemon() {
-		daemon.SignalDaemonDump(testEnv.DaemonPID())
+func (s *DockerSuite) OnTimeout(c *testing.T) {
+	if testEnv.IsRemoteDaemon() {
+		return
+	}
+	path := filepath.Join(os.Getenv("DEST"), "docker.pid")
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		c.Fatalf("Failed to get daemon PID from %s\n", path)
+	}
+
+	rawPid, err := strconv.ParseInt(string(b), 10, 32)
+	if err != nil {
+		c.Fatalf("Failed to parse pid from %s: %s\n", path, err)
+	}
+
+	daemonPid := int(rawPid)
+	if daemonPid > 0 {
+		testdaemon.SignalDaemonDump(daemonPid)
 	}
 }
 
-func (s *DockerSuite) TearDownTest(c *check.C) {
-	testEnv.Clean(c, dockerBinary)
-}
-
-func init() {
-	check.Suite(&DockerRegistrySuite{
-		ds: &DockerSuite{},
-	})
+func (s *DockerSuite) TearDownTest(c *testing.T) {
+	testEnv.Clean(c)
 }
 
 type DockerRegistrySuite struct {
@@ -115,19 +177,18 @@ type DockerRegistrySuite struct {
 	d   *daemon.Daemon
 }
 
-func (s *DockerRegistrySuite) OnTimeout(c *check.C) {
+func (s *DockerRegistrySuite) OnTimeout(c *testing.T) {
 	s.d.DumpStackAndQuit()
 }
 
-func (s *DockerRegistrySuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, registry.Hosting)
-	s.reg = setupRegistry(c, false, "", "")
-	s.d = daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+func (s *DockerRegistrySuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, RegistryHosting, testEnv.IsLocalDaemon)
+	s.reg = registry.NewV2(c)
+	s.reg.WaitReady(c)
+	s.d = daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 }
 
-func (s *DockerRegistrySuite) TearDownTest(c *check.C) {
+func (s *DockerRegistrySuite) TearDownTest(c *testing.T) {
 	if s.reg != nil {
 		s.reg.Close()
 	}
@@ -135,12 +196,6 @@ func (s *DockerRegistrySuite) TearDownTest(c *check.C) {
 		s.d.Stop(c)
 	}
 	s.ds.TearDownTest(c)
-}
-
-func init() {
-	check.Suite(&DockerSchema1RegistrySuite{
-		ds: &DockerSuite{},
-	})
 }
 
 type DockerSchema1RegistrySuite struct {
@@ -149,19 +204,18 @@ type DockerSchema1RegistrySuite struct {
 	d   *daemon.Daemon
 }
 
-func (s *DockerSchema1RegistrySuite) OnTimeout(c *check.C) {
+func (s *DockerSchema1RegistrySuite) OnTimeout(c *testing.T) {
 	s.d.DumpStackAndQuit()
 }
 
-func (s *DockerSchema1RegistrySuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, registry.Hosting, NotArm64)
-	s.reg = setupRegistry(c, true, "", "")
-	s.d = daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+func (s *DockerSchema1RegistrySuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, RegistryHosting, NotArm64, testEnv.IsLocalDaemon)
+	s.reg = registry.NewV2(c, registry.Schema1)
+	s.reg.WaitReady(c)
+	s.d = daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 }
 
-func (s *DockerSchema1RegistrySuite) TearDownTest(c *check.C) {
+func (s *DockerSchema1RegistrySuite) TearDownTest(c *testing.T) {
 	if s.reg != nil {
 		s.reg.Close()
 	}
@@ -169,12 +223,6 @@ func (s *DockerSchema1RegistrySuite) TearDownTest(c *check.C) {
 		s.d.Stop(c)
 	}
 	s.ds.TearDownTest(c)
-}
-
-func init() {
-	check.Suite(&DockerRegistryAuthHtpasswdSuite{
-		ds: &DockerSuite{},
-	})
 }
 
 type DockerRegistryAuthHtpasswdSuite struct {
@@ -183,34 +231,27 @@ type DockerRegistryAuthHtpasswdSuite struct {
 	d   *daemon.Daemon
 }
 
-func (s *DockerRegistryAuthHtpasswdSuite) OnTimeout(c *check.C) {
+func (s *DockerRegistryAuthHtpasswdSuite) OnTimeout(c *testing.T) {
 	s.d.DumpStackAndQuit()
 }
 
-func (s *DockerRegistryAuthHtpasswdSuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, registry.Hosting)
-	s.reg = setupRegistry(c, false, "htpasswd", "")
-	s.d = daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+func (s *DockerRegistryAuthHtpasswdSuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, RegistryHosting, testEnv.IsLocalDaemon)
+	s.reg = registry.NewV2(c, registry.Htpasswd)
+	s.reg.WaitReady(c)
+	s.d = daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 }
 
-func (s *DockerRegistryAuthHtpasswdSuite) TearDownTest(c *check.C) {
+func (s *DockerRegistryAuthHtpasswdSuite) TearDownTest(c *testing.T) {
 	if s.reg != nil {
 		out, err := s.d.Cmd("logout", privateRegistryURL)
-		c.Assert(err, check.IsNil, check.Commentf(out))
+		assert.NilError(c, err, out)
 		s.reg.Close()
 	}
 	if s.d != nil {
 		s.d.Stop(c)
 	}
 	s.ds.TearDownTest(c)
-}
-
-func init() {
-	check.Suite(&DockerRegistryAuthTokenSuite{
-		ds: &DockerSuite{},
-	})
 }
 
 type DockerRegistryAuthTokenSuite struct {
@@ -219,21 +260,19 @@ type DockerRegistryAuthTokenSuite struct {
 	d   *daemon.Daemon
 }
 
-func (s *DockerRegistryAuthTokenSuite) OnTimeout(c *check.C) {
+func (s *DockerRegistryAuthTokenSuite) OnTimeout(c *testing.T) {
 	s.d.DumpStackAndQuit()
 }
 
-func (s *DockerRegistryAuthTokenSuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, registry.Hosting)
-	s.d = daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+func (s *DockerRegistryAuthTokenSuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, RegistryHosting, testEnv.IsLocalDaemon)
+	s.d = daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 }
 
-func (s *DockerRegistryAuthTokenSuite) TearDownTest(c *check.C) {
+func (s *DockerRegistryAuthTokenSuite) TearDownTest(c *testing.T) {
 	if s.reg != nil {
 		out, err := s.d.Cmd("logout", privateRegistryURL)
-		c.Assert(err, check.IsNil, check.Commentf(out))
+		assert.NilError(c, err, out)
 		s.reg.Close()
 	}
 	if s.d != nil {
@@ -242,17 +281,12 @@ func (s *DockerRegistryAuthTokenSuite) TearDownTest(c *check.C) {
 	s.ds.TearDownTest(c)
 }
 
-func (s *DockerRegistryAuthTokenSuite) setupRegistryWithTokenService(c *check.C, tokenURL string) {
+func (s *DockerRegistryAuthTokenSuite) setupRegistryWithTokenService(c *testing.T, tokenURL string) {
 	if s == nil {
 		c.Fatal("registry suite isn't initialized")
 	}
-	s.reg = setupRegistry(c, false, "token", tokenURL)
-}
-
-func init() {
-	check.Suite(&DockerDaemonSuite{
-		ds: &DockerSuite{},
-	})
+	s.reg = registry.NewV2(c, registry.Token(tokenURL))
+	s.reg.WaitReady(c)
 }
 
 type DockerDaemonSuite struct {
@@ -260,27 +294,25 @@ type DockerDaemonSuite struct {
 	d  *daemon.Daemon
 }
 
-func (s *DockerDaemonSuite) OnTimeout(c *check.C) {
+func (s *DockerDaemonSuite) OnTimeout(c *testing.T) {
 	s.d.DumpStackAndQuit()
 }
 
-func (s *DockerDaemonSuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, SameHostDaemon)
-	s.d = daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+func (s *DockerDaemonSuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, testEnv.IsLocalDaemon)
+	s.d = daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 }
 
-func (s *DockerDaemonSuite) TearDownTest(c *check.C) {
-	testRequires(c, DaemonIsLinux, SameHostDaemon)
+func (s *DockerDaemonSuite) TearDownTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, testEnv.IsLocalDaemon)
 	if s.d != nil {
 		s.d.Stop(c)
 	}
 	s.ds.TearDownTest(c)
 }
 
-func (s *DockerDaemonSuite) TearDownSuite(c *check.C) {
-	filepath.Walk(daemon.SockRoot, func(path string, fi os.FileInfo, err error) error {
+func (s *DockerDaemonSuite) TearDownSuite(c *testing.T) {
+	filepath.Walk(testdaemon.SockRoot, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
 			// ignore errors here
 			// not cleaning up sockets is not really an error
@@ -291,26 +323,20 @@ func (s *DockerDaemonSuite) TearDownSuite(c *check.C) {
 		}
 		return nil
 	})
-	os.RemoveAll(daemon.SockRoot)
+	os.RemoveAll(testdaemon.SockRoot)
 }
 
 const defaultSwarmPort = 2477
 
-func init() {
-	check.Suite(&DockerSwarmSuite{
-		ds: &DockerSuite{},
-	})
-}
-
 type DockerSwarmSuite struct {
 	server      *httptest.Server
 	ds          *DockerSuite
-	daemons     []*daemon.Swarm
-	daemonsLock sync.Mutex // protect access to daemons
+	daemonsLock sync.Mutex // protect access to daemons and portIndex
+	daemons     []*daemon.Daemon
 	portIndex   int
 }
 
-func (s *DockerSwarmSuite) OnTimeout(c *check.C) {
+func (s *DockerSwarmSuite) OnTimeout(c *testing.T) {
 	s.daemonsLock.Lock()
 	defer s.daemonsLock.Unlock()
 	for _, d := range s.daemons {
@@ -318,140 +344,46 @@ func (s *DockerSwarmSuite) OnTimeout(c *check.C) {
 	}
 }
 
-func (s *DockerSwarmSuite) SetUpTest(c *check.C) {
-	testRequires(c, DaemonIsLinux)
+func (s *DockerSwarmSuite) SetUpTest(c *testing.T) {
+	testRequires(c, DaemonIsLinux, testEnv.IsLocalDaemon)
 }
 
-func (s *DockerSwarmSuite) AddDaemon(c *check.C, joinSwarm, manager bool) *daemon.Swarm {
-	d := &daemon.Swarm{
-		Daemon: daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-			Experimental: testEnv.ExperimentalDaemon(),
-		}),
-		Port: defaultSwarmPort + s.portIndex,
-	}
-	d.ListenAddr = fmt.Sprintf("0.0.0.0:%d", d.Port)
-	args := []string{"--iptables=false", "--swarm-default-advertise-addr=lo"} // avoid networking conflicts
-	d.StartWithBusybox(c, args...)
-
-	if joinSwarm == true {
+func (s *DockerSwarmSuite) AddDaemon(c *testing.T, joinSwarm, manager bool) *daemon.Daemon {
+	d := daemon.New(c, dockerBinary, dockerdBinary,
+		testdaemon.WithEnvironment(testEnv.Execution),
+		testdaemon.WithSwarmPort(defaultSwarmPort+s.portIndex),
+	)
+	if joinSwarm {
 		if len(s.daemons) > 0 {
-			tokens := s.daemons[0].JoinTokens(c)
-			token := tokens.Worker
-			if manager {
-				token = tokens.Manager
-			}
-			c.Assert(d.Join(swarm.JoinRequest{
-				RemoteAddrs: []string{s.daemons[0].ListenAddr},
-				JoinToken:   token,
-			}), check.IsNil)
+			d.StartAndSwarmJoin(c, s.daemons[0].Daemon, manager)
 		} else {
-			c.Assert(d.Init(swarm.InitRequest{}), check.IsNil)
+			d.StartAndSwarmInit(c)
 		}
+	} else {
+		d.StartNodeWithBusybox(c)
 	}
 
-	s.portIndex++
 	s.daemonsLock.Lock()
+	s.portIndex++
 	s.daemons = append(s.daemons, d)
 	s.daemonsLock.Unlock()
 
 	return d
 }
 
-func (s *DockerSwarmSuite) TearDownTest(c *check.C) {
+func (s *DockerSwarmSuite) TearDownTest(c *testing.T) {
 	testRequires(c, DaemonIsLinux)
 	s.daemonsLock.Lock()
 	for _, d := range s.daemons {
 		if d != nil {
 			d.Stop(c)
-			// FIXME(vdemeester) should be handled by SwarmDaemon ?
-			// raft state file is quite big (64MB) so remove it after every test
-			walDir := filepath.Join(d.Root, "swarm/raft/wal")
-			if err := os.RemoveAll(walDir); err != nil {
-				c.Logf("error removing %v: %v", walDir, err)
-			}
-
-			d.CleanupExecRoot(c)
+			d.Cleanup(c)
 		}
 	}
 	s.daemons = nil
-	s.daemonsLock.Unlock()
-
 	s.portIndex = 0
+	s.daemonsLock.Unlock()
 	s.ds.TearDownTest(c)
-}
-
-func init() {
-	check.Suite(&DockerTrustSuite{
-		ds: &DockerSuite{},
-	})
-}
-
-type DockerTrustSuite struct {
-	ds  *DockerSuite
-	reg *registry.V2
-	not *testNotary
-}
-
-func (s *DockerTrustSuite) OnTimeout(c *check.C) {
-	s.ds.OnTimeout(c)
-}
-
-func (s *DockerTrustSuite) SetUpTest(c *check.C) {
-	testRequires(c, registry.Hosting, NotaryServerHosting)
-	s.reg = setupRegistry(c, false, "", "")
-	s.not = setupNotary(c)
-}
-
-func (s *DockerTrustSuite) TearDownTest(c *check.C) {
-	if s.reg != nil {
-		s.reg.Close()
-	}
-	if s.not != nil {
-		s.not.Close()
-	}
-
-	// Remove trusted keys and metadata after test
-	os.RemoveAll(filepath.Join(config.Dir(), "trust"))
-	s.ds.TearDownTest(c)
-}
-
-func init() {
-	ds := &DockerSuite{}
-	check.Suite(&DockerTrustedSwarmSuite{
-		trustSuite: DockerTrustSuite{
-			ds: ds,
-		},
-		swarmSuite: DockerSwarmSuite{
-			ds: ds,
-		},
-	})
-}
-
-type DockerTrustedSwarmSuite struct {
-	swarmSuite DockerSwarmSuite
-	trustSuite DockerTrustSuite
-	reg        *registry.V2
-	not        *testNotary
-}
-
-func (s *DockerTrustedSwarmSuite) SetUpTest(c *check.C) {
-	s.swarmSuite.SetUpTest(c)
-	s.trustSuite.SetUpTest(c)
-}
-
-func (s *DockerTrustedSwarmSuite) TearDownTest(c *check.C) {
-	s.trustSuite.TearDownTest(c)
-	s.swarmSuite.TearDownTest(c)
-}
-
-func (s *DockerTrustedSwarmSuite) OnTimeout(c *check.C) {
-	s.swarmSuite.OnTimeout(c)
-}
-
-func init() {
-	check.Suite(&DockerPluginSuite{
-		ds: &DockerSuite{},
-	})
 }
 
 type DockerPluginSuite struct {
@@ -470,27 +402,28 @@ func (ps *DockerPluginSuite) getPluginRepoWithTag() string {
 	return ps.getPluginRepo() + ":" + "latest"
 }
 
-func (ps *DockerPluginSuite) SetUpSuite(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-	ps.registry = setupRegistry(c, false, "", "")
+func (ps *DockerPluginSuite) SetUpSuite(c *testing.T) {
+	testRequires(c, DaemonIsLinux, RegistryHosting)
+	ps.registry = registry.NewV2(c)
+	ps.registry.WaitReady(c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	err := plugin.CreateInRegistry(ctx, ps.getPluginRepo(), nil)
-	c.Assert(err, checker.IsNil, check.Commentf("failed to create plugin"))
+	assert.NilError(c, err, "failed to create plugin")
 }
 
-func (ps *DockerPluginSuite) TearDownSuite(c *check.C) {
+func (ps *DockerPluginSuite) TearDownSuite(c *testing.T) {
 	if ps.registry != nil {
 		ps.registry.Close()
 	}
 }
 
-func (ps *DockerPluginSuite) TearDownTest(c *check.C) {
+func (ps *DockerPluginSuite) TearDownTest(c *testing.T) {
 	ps.ds.TearDownTest(c)
 }
 
-func (ps *DockerPluginSuite) OnTimeout(c *check.C) {
+func (ps *DockerPluginSuite) OnTimeout(c *testing.T) {
 	ps.ds.OnTimeout(c)
 }
