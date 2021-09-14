@@ -1,9 +1,11 @@
-FROM golang:1.9
+FROM golang:1.16-alpine
 
 RUN go get github.com/jstemmer/go-junit-report
 
 COPY . /go/src/github.com/cyverse-de/image-janitor
-RUN go install github.com/cyverse-de/image-janitor
+WORKDIR /go/src/github.com/cyverse-de/image-janitor
+ENV CGO_ENABLED=0
+RUN go install -tags osusergo github.com/cyverse-de/image-janitor
 
 ENTRYPOINT ["image-janitor"]
 CMD ["--help"]
