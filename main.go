@@ -55,9 +55,7 @@ func (d *dclient) Images() ([]string, error) {
 	var retval []string
 	for _, img := range images {
 		repos := img.RepoTags
-		for _, r := range repos {
-			retval = append(retval, r)
-		}
+		retval = append(retval, repos...)
 	}
 	return retval, nil
 }
@@ -368,7 +366,10 @@ func main() {
 
 	go app.client.Listen()
 
-	app.client.SetupPublishing(exchangeName)
+	err = app.client.SetupPublishing(exchangeName)
+	if err != nil {
+		logcabin.Info.Print(err)
+	}
 
 	logcabin.Info.Printf("Connecting to Docker at %s", *dockerURI)
 	dc, err := docker.NewClient(*dockerURI)
@@ -381,9 +382,7 @@ func main() {
 
 	timer := time.NewTicker(timerDuration)
 	for {
-		select {
-		case <-timer.C:
-			app.removeUnusedImages(client, *readFrom)
-		}
+		<-timer.C
+		app.removeUnusedImages(client, *readFrom)
 	}
 }
