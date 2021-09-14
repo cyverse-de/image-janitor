@@ -16,7 +16,7 @@ timestamps {
             stage('Test') {
                 dockerTestRunner = "test-${env.BUILD_TAG}"
                 try {
-                    sh "docker run --rm --entrypoint 'sh' ${dockerImage.imageName()} -c \"go test -v github.com/cyverse-de/image-janitor | tee /dev/stderr | go-junit-report\" > test-results.xml"
+                    sh "docker run --rm --entrypoint 'sh' ${dockerImage.imageName()} -c \"go test -tags osusergo -v github.com/cyverse-de/image-janitor | tee /dev/stderr | go-junit-report\" > test-results.xml"
                 } finally {
                     junit 'test-results.xml'
 
