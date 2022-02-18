@@ -7,7 +7,6 @@ require (
 	github.com/Microsoft/hcsshim v0.8.6 // indirect
 	github.com/containerd/containerd v1.3.0 // indirect
 	github.com/cyverse-de/configurate v0.0.0-20190318152107-8f767cb828d9
-	github.com/cyverse-de/logcabin v0.0.0-20160401174415-9f21bb841c20
 	github.com/cyverse-de/model v0.0.0-20191010231803-604796c0f9ba // indirect
 	github.com/cyverse-de/version v0.0.0-20160624001912-bf48f0d262aa
 	github.com/docker/distribution v2.7.1+incompatible // indirect
@@ -18,6 +17,7 @@ require (
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/pelletier/go-toml v1.5.0 // indirect
 	github.com/pkg/errors v0.8.1
+	github.com/sirupsen/logrus v1.4.1
 	github.com/spf13/afero v1.2.2 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect

@@ -15,15 +15,16 @@ import (
 	"github.com/cyverse-de/version"
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gopkg.in/cyverse-de/messaging.v2"
 
 	"github.com/cyverse-de/configurate"
-	"github.com/cyverse-de/logcabin"
 	"gopkg.in/cyverse-de/model.v4"
 )
 
 var filenameRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
+var log = logrus.WithFields(logrus.Fields{"service": "image-janitor"})
 
 // DockerClient is the subset of the docker client functions that image-janitor
 // uses.
@@ -151,7 +152,7 @@ func (i *ImageJanitor) jobs(filepaths []string) ([]model.Job, error) {
 
 		job, err := model.NewFromData(i.cfg, data)
 		if err != nil {
-			logcabin.Error.Printf("error parsing %s, continuing: %s", filepath, err)
+			log.Errorf("error parsing %s, continuing: %s", filepath, err)
 			continue
 		}
 
@@ -234,20 +235,20 @@ func (i *ImageJanitor) removeImage(client DockerClient, image string) error {
 func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) {
 	listing, err := i.jobFiles(readFrom)
 	if err != nil {
-		logcabin.Error.Print(err)
+		log.Error(err)
 		return
 	}
 
 	jobList, err := i.jobs(listing)
 	if err != nil {
-		logcabin.Error.Print(err)
+		log.Error(err)
 		return
 	}
 
 	imagesFromJobs := i.jobImages(jobList)
 	imagesFromDocker, err := client.Images()
 	if err != nil {
-		logcabin.Error.Print(err)
+		log.Error(err)
 		return
 	}
 
@@ -256,31 +257,31 @@ func (i *ImageJanitor) removeUnusedImages(client DockerClient, readFrom string) 
 	excludesPath := path.Join(readFrom, "excludes")
 	excludesFile, err := os.Open(excludesPath)
 	if err != nil {
-		logcabin.Error.Printf("error opening excludes file: %s\n", err)
+		log.Errorf("error opening excludes file: %s\n", err)
 	}
 	defer excludesFile.Close()
 
 	excludes, err := i.readExcludes(excludesFile)
 	if err != nil {
-		logcabin.Error.Println(err)
+		log.Error(err)
 	}
 
 	for _, removableImage := range rmables {
 		if _, ok := excludes[removableImage]; !ok {
 			if err = i.removeImage(client, removableImage); err != nil {
 				errmsg := fmt.Sprintf("error removing image %s: %s", removableImage, err)
-				logcabin.Error.Println(errmsg)
+				log.Error(errmsg)
 			}
 		}
 	}
 
 	danglingImages, err := client.DanglingImages()
 	if err != nil {
-		logcabin.Error.Println(err)
+		log.Error(err)
 	}
 	for _, di := range danglingImages {
 		if err = client.SafelyRemoveImageByID(di); err != nil {
-			logcabin.Error.Println(err)
+			log.Error(err)
 		}
 	}
 }
@@ -318,8 +319,6 @@ func main() {
 
 	flag.Parse()
 
-	logcabin.Init("image-janitor", "image-janitor")
-
 	if *showVersion {
 		version.AppVersion()
 		os.Exit(0)
@@ -327,31 +326,31 @@ func main() {
 
 	r, err := os.Open(*readFrom)
 	if err != nil {
-		logcabin.Error.Fatal(err)
+		log.Fatal(err)
 	}
 	r.Close()
 
-	logcabin.Info.Printf("Parsing interval %s", *interval)
+	log.Infof("Parsing interval %s", *interval)
 	if timerDuration, err = time.ParseDuration(*interval); err != nil {
-		logcabin.Error.Fatal(err)
+		log.Fatal(err)
 	}
-	logcabin.Info.Printf("Successfully parsed interval %s", *interval)
+	log.Infof("Successfully parsed interval %s", *interval)
 
 	if *cfgPath == "" {
-		logcabin.Error.Fatal("--config must be set.")
+		log.Fatal("--config must be set.")
 	}
 
-	logcabin.Info.Printf("Reading config from %s", *cfgPath)
+	log.Infof("Reading config from %s", *cfgPath)
 	if r, err = os.Open(*cfgPath); err != nil {
-		logcabin.Error.Fatal(*cfgPath)
+		log.Fatal(*cfgPath)
 	}
 	r.Close()
 
 	cfg, err = configurate.InitDefaults(*cfgPath, configurate.JobServicesDefaults)
 	if err != nil {
-		logcabin.Error.Fatal(err)
+		log.Fatal(err)
 	}
-	logcabin.Info.Printf("Done reading config from %s", *cfgPath)
+	log.Infof("Done reading config from %s", *cfgPath)
 
 	amqpURI := cfg.GetString("amqp.uri")
 	exchangeName := cfg.GetString("amqp.exchange.name")
@@ -360,7 +359,7 @@ func main() {
 
 	app.client, err = messaging.NewClient(amqpURI, false)
 	if err != nil {
-		logcabin.Error.Fatal(err)
+		log.Fatal(err)
 	}
 	defer app.client.Close()
 
@@ -368,15 +367,15 @@ func main() {
 
 	err = app.client.SetupPublishing(exchangeName)
 	if err != nil {
-		logcabin.Info.Print(err)
+		log.Error(err)
 	}
 
-	logcabin.Info.Printf("Connecting to Docker at %s", *dockerURI)
+	log.Infof("Connecting to Docker at %s", *dockerURI)
 	dc, err := docker.NewClient(*dockerURI)
 	if err != nil {
-		logcabin.Error.Fatal(err)
+		log.Fatal(err)
 	}
-	logcabin.Info.Printf("Done connecting to Docker at %s", *dockerURI)
+	log.Infof("Done connecting to Docker at %s", *dockerURI)
 
 	client := &dclient{dc}
 
