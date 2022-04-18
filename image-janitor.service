@@ -1,0 +1,14 @@
+[Unit]
+Description=Cleans up docker images
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=condor
+ExecStart=/usr/local/bin/image-janitor
+Restart=on-failure
+StartLimitInterval=60s
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target

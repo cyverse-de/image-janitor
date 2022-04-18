@@ -47,3 +47,4 @@ jobs:
           prerelease: false
           files: |
             image-janitor
+            image-janitor.service
