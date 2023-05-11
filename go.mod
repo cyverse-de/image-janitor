@@ -9,7 +9,7 @@ require (
 	github.com/cyverse-de/configurate v0.0.0-20190318152107-8f767cb828d9
 	github.com/cyverse-de/model v0.0.0-20191010231803-604796c0f9ba // indirect
 	github.com/cyverse-de/version v0.0.0-20160624001912-bf48f0d262aa
-	github.com/docker/distribution v2.7.1+incompatible // indirect
+	github.com/docker/distribution v2.8.2+incompatible // indirect
 	github.com/docker/docker v17.12.0-ce-rc1.0.20191014040707-e582a10b593c+incompatible // indirect
 	github.com/fsouza/go-dockerclient v1.4.1
 	github.com/gogo/protobuf v1.3.1 // indirect
