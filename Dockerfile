@@ -1,6 +1,4 @@
-FROM golang:1.16-alpine
-
-RUN go get github.com/jstemmer/go-junit-report
+FROM golang:1.20-alpine
 
 COPY . /go/src/github.com/cyverse-de/image-janitor
 WORKDIR /go/src/github.com/cyverse-de/image-janitor
