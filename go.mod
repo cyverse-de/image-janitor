@@ -18,7 +18,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/containerd/containerd v1.7.2 // indirect
 	github.com/cyverse-de/model v0.0.0-20191010231803-604796c0f9ba // indirect
-	github.com/docker/docker v24.0.2+incompatible // indirect
+	github.com/docker/docker v24.0.7+incompatible // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
