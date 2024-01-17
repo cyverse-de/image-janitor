@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"regexp"
@@ -65,7 +64,7 @@ func (d *dclient) DanglingImages() ([]string, error) {
 	var err error
 
 	imageFilter := map[string][]string{
-		"dangling": []string{"true"},
+		"dangling": {"true"},
 	}
 
 	images, err := d.client.ListImages(docker.ListImagesOptions{
@@ -122,13 +121,13 @@ func New(cfg *viper.Viper) *ImageJanitor {
 func (i *ImageJanitor) jobFiles(dir string) ([]string, error) {
 	var retval []string
 
-	entries, err := ioutil.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, entry := range entries {
-		if entry.Mode().IsRegular() {
+		if entry.Type().IsRegular() {
 			if !filenameRegex.Match([]byte(entry.Name())) {
 				continue
 			}
@@ -145,7 +144,7 @@ func (i *ImageJanitor) jobs(filepaths []string) ([]model.Job, error) {
 	var retval []model.Job
 
 	for _, filepath := range filepaths {
-		data, err := ioutil.ReadFile(filepath)
+		data, err := os.ReadFile(filepath)
 		if err != nil {
 			return retval, err
 		}
@@ -290,7 +289,7 @@ func (i *ImageJanitor) readExcludes(readFrom io.Reader) (map[string]bool, error)
 	retval := make(map[string]bool)
 
 	// excludesPath := path.Join(readFrom, "excludes")
-	excludesBytes, err := ioutil.ReadAll(readFrom)
+	excludesBytes, err := io.ReadAll(readFrom)
 	if err != nil {
 		return retval, err
 	}
