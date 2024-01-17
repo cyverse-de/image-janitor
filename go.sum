@@ -275,8 +275,6 @@ github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An
 github.com/spf13/viper v1.8.1/go.mod h1:o0Pch8wJ9BVSWGQMbra6iw0oQ5oktSIBaujf1rJH9Ns=
 github.com/spf13/viper v1.16.0 h1:rGGH0XDZhdUOryiDWjmIvUSWpbNqisK8Wk0Vyefw8hc=
 github.com/spf13/viper v1.16.0/go.mod h1:yg78JgCJcbrQOvV9YLXgkLaZqUidkY9K+Dd1FofRzQg=
-github.com/streadway/amqp v1.1.0 h1:py12iX8XSyI7aN/3dUT8DFIDJazNJsVJdxNVEpnQTZM=
-github.com/streadway/amqp v1.1.0/go.mod h1:WYSrTEYHOXHd0nwFeUXAe2G2hRnQT+deZJJf88uS9Bg=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
@@ -650,10 +648,6 @@ google.golang.org/protobuf v1.26.0/go.mod h1:9q0QmTI4eRPtz6boOQmLYwt+qCgq0jsYwAQ
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 h1:qIbj1fsPNlZgppZ+VLlY7N33q108Sa+fhmuc+sWQYwY=
 gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/cyverse-de/messaging.v2 v2.0.0-20170721171855-79fe2cf2fd16 h1:X8VpBLR1NkotySHpvXh/snX2YEyEUAKpLMPKAzo/ntg=
-gopkg.in/cyverse-de/messaging.v2 v2.0.0-20170721171855-79fe2cf2fd16/go.mod h1:ykfrna2wC9wFwsJfmGZiPKn6DnR6sJ4sXVkGzBXEwWE=
-gopkg.in/cyverse-de/model.v1 v1.0.0-20171212201224-3b06c9e9e248 h1:3SBsrDVQ7pz5DpYUgXpZI4R1PXzYDbLKdi3uJ6Tis8w=
-gopkg.in/cyverse-de/model.v1 v1.0.0-20171212201224-3b06c9e9e248/go.mod h1:h8BUxD3RyDl7xsjW4pfIMWKNdO9HK3Mkd0pL7Q9/WGQ=
 gopkg.in/cyverse-de/model.v4 v4.0.0-20191010001558-736b5a572acd h1:CdzbYUyHPqE7TElo/t+hIKImkPufEpv4fA/KltYpFIg=
 gopkg.in/cyverse-de/model.v4 v4.0.0-20191010001558-736b5a572acd/go.mod h1:HqIXwDCGrNLg/xyLDsJbg+DkDosGk9pddB/XHw9bcRU=
 gopkg.in/errgo.v2 v2.1.0/go.mod h1:hNsd1EY+bozCKY1Ytp96fpM3vjJbqLJn88ws8XvfDNI=

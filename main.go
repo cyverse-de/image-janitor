@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -15,10 +16,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
-	"gopkg.in/cyverse-de/messaging.v2"
 
-	"github.com/cyverse-de/configurate"
 	"gopkg.in/cyverse-de/model.v4"
 )
 
@@ -93,27 +91,12 @@ func (d *dclient) SafelyRemoveImageByID(id string) error {
 	return err
 }
 
-// Messenger defines an interface for handling AMQP operations. This is the
-// subset of functionality needed by job-status-recorder.
-type Messenger interface {
-	AddConsumer(string, string, string, string, messaging.MessageHandler)
-	Close()
-	Listen()
-	Publish(string, []byte) error
-	SetupPublishing(string) error
-}
-
 // ImageJanitor contains application state for image-janitor
-type ImageJanitor struct {
-	cfg    *viper.Viper
-	client Messenger
-}
+type ImageJanitor struct{}
 
 // New returns a *ImageJanitor
-func New(cfg *viper.Viper) *ImageJanitor {
-	return &ImageJanitor{
-		cfg: cfg,
-	}
+func New() *ImageJanitor {
+	return &ImageJanitor{}
 }
 
 // jobFiles lists the files in the directory that have a filename matching the
@@ -149,7 +132,8 @@ func (i *ImageJanitor) jobs(filepaths []string) ([]model.Job, error) {
 			return retval, err
 		}
 
-		job, err := model.NewFromData(i.cfg, data)
+		job := &model.Job{}
+		err = json.Unmarshal(data, job)
 		if err != nil {
 			log.Errorf("error parsing %s, continuing: %s", filepath, err)
 			continue
@@ -308,10 +292,8 @@ func main() {
 	var (
 		showVersion   = flag.Bool("version", false, "Print version information.")
 		interval      = flag.String("interval", "1m", "Time between clean up attempts.")
-		cfgPath       = flag.String("config", "/etc/jobservices.yml", "Path to the config.")
 		readFrom      = flag.String("read-from", "/opt/image-janitor", "The directory that job files are read from.")
 		dockerURI     = flag.String("docker", "unix:///var/run/docker.sock", "The URI for connecting to docker.")
-		cfg           *viper.Viper
 		err           error
 		timerDuration time.Duration
 	)
@@ -335,39 +317,7 @@ func main() {
 	}
 	log.Infof("Successfully parsed interval %s", *interval)
 
-	if *cfgPath == "" {
-		log.Fatal("--config must be set.")
-	}
-
-	log.Infof("Reading config from %s", *cfgPath)
-	if r, err = os.Open(*cfgPath); err != nil {
-		log.Fatal(*cfgPath)
-	}
-	r.Close()
-
-	cfg, err = configurate.InitDefaults(*cfgPath, configurate.JobServicesDefaults)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Infof("Done reading config from %s", *cfgPath)
-
-	amqpURI := cfg.GetString("amqp.uri")
-	exchangeName := cfg.GetString("amqp.exchange.name")
-
-	app := New(cfg)
-
-	app.client, err = messaging.NewClient(amqpURI, false)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer app.client.Close()
-
-	go app.client.Listen()
-
-	err = app.client.SetupPublishing(exchangeName)
-	if err != nil {
-		log.Error(err)
-	}
+	app := New()
 
 	log.Infof("Connecting to Docker at %s", *dockerURI)
 	dc, err := docker.NewClient(*dockerURI)

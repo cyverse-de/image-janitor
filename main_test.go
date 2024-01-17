@@ -2,64 +2,9 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"testing"
-
-	"github.com/cyverse-de/configurate"
-	"github.com/spf13/viper"
-	"gopkg.in/cyverse-de/messaging.v2"
 )
-
-var (
-	cfg *viper.Viper
-)
-
-type MockConsumer struct {
-	exchange     string
-	exchangeType string
-	queue        string
-	key          string
-	handler      messaging.MessageHandler
-}
-
-type MockMessage struct {
-	key string
-	msg []byte
-}
-
-type MockMessenger struct {
-	consumers         []MockConsumer
-	publishedMessages []MockMessage
-	publishTo         []string
-	publishError      bool
-}
-
-func (m *MockMessenger) Close()  {}
-func (m *MockMessenger) Listen() {}
-
-func (m *MockMessenger) AddConsumer(exchange, exchangeType, queue, key string, handler messaging.MessageHandler) {
-	m.consumers = append(m.consumers, MockConsumer{
-		exchange:     exchange,
-		exchangeType: exchangeType,
-		queue:        queue,
-		key:          key,
-		handler:      handler,
-	})
-}
-
-func (m *MockMessenger) Publish(key string, msg []byte) error {
-	if m.publishError {
-		return errors.New("publish error")
-	}
-	m.publishedMessages = append(m.publishedMessages, MockMessage{key: key, msg: msg})
-	return nil
-}
-
-func (m *MockMessenger) SetupPublishing(exchange string) error {
-	m.publishTo = append(m.publishTo, exchange)
-	return nil
-}
 
 type DockerTest struct {
 	removedImages   []string
@@ -123,27 +68,8 @@ func (d *DockerTest) SafelyRemoveImageByID(id string) error {
 	return nil
 }
 
-func inittests(t *testing.T) {
-	var err error
-	cfg, err = configurate.Init("test/test_config.yaml")
-	if err != nil {
-		t.Error(err)
-	}
-	cfg.Set("irods.base", "/path/to/irodsbase")
-	cfg.Set("irods.host", "hostname")
-	cfg.Set("irods.port", "1247")
-	cfg.Set("irods.user", "user")
-	cfg.Set("irods.pass", "pass")
-	cfg.Set("irods.zone", "test")
-	cfg.Set("irods.resc", "")
-	cfg.Set("condor.log_path", "/path/to/logs")
-	cfg.Set("condor.porklock_tag", "test")
-	cfg.Set("condor.filter_files", "foo,bar,baz,blippy")
-	cfg.Set("condor.request_disk", "0")
-}
-
 func TestJobFiles(t *testing.T) {
-	app := New(cfg)
+	app := New()
 	listing, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
@@ -179,8 +105,7 @@ func TestJobFiles(t *testing.T) {
 }
 
 func TestJobs(t *testing.T) {
-	inittests(t)
-	app := New(cfg)
+	app := New()
 	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
@@ -219,8 +144,7 @@ func TestJobs(t *testing.T) {
 }
 
 func TestJobImages(t *testing.T) {
-	inittests(t)
-	app := New(cfg)
+	app := New()
 	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
@@ -254,8 +178,7 @@ func TestJobImages(t *testing.T) {
 }
 
 func TestRemovableImages(t *testing.T) {
-	inittests(t)
-	app := New(cfg)
+	app := New()
 	paths, err := app.jobFiles("test/")
 	if err != nil {
 		t.Error(err)
@@ -284,8 +207,7 @@ func TestRemovableImages(t *testing.T) {
 }
 
 func TestReadExcludes(t *testing.T) {
-	inittests(t)
-	app := New(cfg)
+	app := New()
 	contents := [][]byte{
 		[]byte("line1"),
 		[]byte("line1\nline2\n"),
@@ -307,7 +229,7 @@ func TestReadExcludes(t *testing.T) {
 }
 
 func TestRemoveImage(t *testing.T) {
-	app := New(cfg)
+	app := New()
 	client := NewDockerTest()
 	err := app.removeImage(client, "alpine:latest")
 	if err != nil {
@@ -329,12 +251,8 @@ func TestRemoveImage(t *testing.T) {
 }
 
 func TestRemoveUnusedImages(t *testing.T) {
-	app := New(cfg)
+	app := New()
 	client := NewDockerTest()
-	amqp := &MockMessenger{
-		publishedMessages: make([]MockMessage, 0),
-	}
-	app.client = amqp
 	app.removeUnusedImages(client, "test/")
 	images, err := client.Images()
 	if err != nil {
