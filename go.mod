@@ -1,6 +1,6 @@
 module github.com/cyverse-de/image-janitor
 
-go 1.20
+go 1.21
 
 require (
 	github.com/cyverse-de/version v0.0.0-20200527190517-b40800dcc78b
