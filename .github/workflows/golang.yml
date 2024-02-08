@@ -39,7 +39,9 @@ jobs:
           check-latest: true
           
       - name: Build
-        run: go build .
+        run: |
+          export PATH=${GOROOT}/bin:${PATH}
+          go build .
 
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
