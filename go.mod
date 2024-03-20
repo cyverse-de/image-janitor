@@ -17,7 +17,7 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/cyverse-de/configurate v0.0.0-20220113221928-13d34aae3f0f // indirect
 	github.com/cyverse-de/model v0.0.0-20191010231803-604796c0f9ba // indirect
-	github.com/docker/docker v25.0.3+incompatible // indirect
+	github.com/docker/docker v25.0.5+incompatible // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
