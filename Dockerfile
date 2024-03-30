@@ -1,4 +1,4 @@
-FROM golang:1.20-alpine
+FROM golang:1.21-alpine
 
 COPY . /go/src/github.com/cyverse-de/image-janitor
 WORKDIR /go/src/github.com/cyverse-de/image-janitor
